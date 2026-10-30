@@ -1,0 +1,60 @@
+/* 颜色变量 */
+:root {
+  --color-bg-primary: #0A0A0F;
+  --color-bg-secondary: #12121C;
+  --color-primary: #8B5CF6;
+  --color-accent: #38BDF8;
+  --color-highlight: #A78BFA;
+  --color-text: #F5F3FF;
+  --color-text-muted: #9996AE;
+}
+
+/* 全局样式 */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 布局 */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.bottom-nav {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  height: 60px;
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(255,255,255,0.1);
+  padding: 8px 0;
+}
+
+.bottom-nav a {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  font-size: 12px;
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.bottom-nav a.isActive {
+  color: var(--color-primary);
+  background: rgba(139, 92, 246, 0.2);
+}
