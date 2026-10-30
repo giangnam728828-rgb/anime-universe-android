@@ -1,12 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "module": ["ESNext", "AMD", "CommonJS", "System"],
+    "module": "ESNext",
     "skipLibCheck": true,
-    "moduleResolution": ["bundler", "node"],
-    "allowImportingTsTypes": true,
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

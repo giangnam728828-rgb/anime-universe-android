@@ -4,7 +4,6 @@ const config: CapacitorConfig = {
   appId: 'com.giangnam728828.anime.universe',
   appName: 'Anime Universe',
   webDir: 'dist',
-  bundledWebRuntime: false,
   server: {
     androidScheme: 'https'
   }
