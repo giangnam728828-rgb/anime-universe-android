@@ -1,7 +1,7 @@
 {
   "name": "anime-universe-android",
   "version": "0.1.0",
-  "description": "综合动漫/漫画/资讯/Android APP",
+  "description": "\u7efc\u5408\u52a8\u6f2b/\u6f2b\u753b/\u8d44\u8baf/Android APP",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -15,7 +15,7 @@
   "license": "MIT",
   "private": true,
   "dependencies": {
-    "@capacitor/core": "^6.2.0",
+    "@capacitor/core": "6.3.0",
     "@capacitor/android": "^6.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
