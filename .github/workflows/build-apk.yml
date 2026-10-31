@@ -30,6 +30,15 @@ jobs:
           fi
           npx cap sync android
 
+      - name: Generate anime app icons & splash
+        run: |
+          if [ -f assets/icon.png ]; then
+            npx capacitor-assets generate --android \
+              --assetPath assets \
+              --iconBackgroundColor "#0A0A0F" \
+              --splashBackgroundColor "#0A0A0F"
+          fi
+
       - name: Setup fixed signing
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}

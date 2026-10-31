@@ -7,6 +7,9 @@ import SearchPage from './modules/search/SearchPage'
 import FavoritesPage from './modules/favorites/FavoritesPage'
 import ProfilePage from './modules/profile/ProfilePage'
 import DetailPage from './modules/detail/DetailPage'
+import LibraryPage from './modules/library/LibraryPage'
+import LocalDetailPage from './modules/library/LocalDetailPage'
+import ReaderPage from './modules/reader/ReaderPage'
 import { useSettings } from './stores/settings'
 
 export default function App() {
@@ -27,6 +30,9 @@ export default function App() {
           <Route path="/detail/:sourceId/:kind/:workId" element={<DetailPage />} />
           <Route path="*" element={<HomePage />} />
         </Route>
+        <Route path="/library" element={<LibraryPage />} />
+        <Route path="/local/:id" element={<LocalDetailPage />} />
+        <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
       </Routes>
     </HashRouter>
   )

@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import Icon from '../../components/Icon'
 import { Row, Modal, Section } from '../../components/ui'
-import { useSettings, type ThemeMode } from '../../stores/settings'
+import { useSettings, type ThemeMode, type ReaderMode, type ReaderBg, READER_BG_CSS } from '../../stores/settings'
 
 export default function ProfilePage() {
-  const { theme, setTheme } = useSettings()
+  const { theme, setTheme, readerMode, setReaderMode, readerBg, setReaderBg } = useSettings()
   const [about, setAbout] = useState(false)
+  const [reading, setReading] = useState(false)
 
   return (
     <>
@@ -33,7 +34,7 @@ export default function ProfilePage() {
       <Section title="功能">
         <div className="rows">
           <Row icon="sparkle" title="AI 助手" desc="自定义 API 地址 / 密钥 / 模型，流式对话" wip />
-          <Row icon="book" title="阅读设置" desc="阅读方向、翻页模式、背景色（阶段 4）" wip />
+          <Row icon="book" title="阅读设置" desc="默认阅读方向与页面背景色" onClick={() => setReading(true)} />
         </div>
       </Section>
 
@@ -61,3 +62,26 @@ export default function ProfilePage() {
     </>
   )
 }
+
+      <Modal open={reading} onClose={() => setReading(false)} title="阅读设置">
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 6 }}>默认阅读方向</div>
+          <div className="seg" style={{ display: 'inline-flex' }}>
+            {(['vertical', 'horizontal'] as ReaderMode[]).map((m) => (
+              <button key={m} className={readerMode === m ? 'on' : ''} onClick={() => setReaderMode(m)}>
+                {m === 'vertical' ? '上下滚动' : '左右翻页'}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{ marginBottom: 6 }}>页面背景色</div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {(['black', 'gray', 'white', 'green'] as ReaderBg[]).map((b) => (
+              <button key={b} onClick={() => setReaderBg(b)}
+                style={{ width: 30, height: 30, borderRadius: '50%', background: READER_BG_CSS[b],
+                  border: readerBg === b ? '2px solid var(--primary)' : '1px solid var(--line)' }} />
+            ))}
+          </div>
+        </div>
+      </Modal>

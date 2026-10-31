@@ -77,7 +77,19 @@ export default function FavoritesPage() {
           ) : (
             <div className="rows">
               {history.map((h) => (
-                <Row key={h.itemId} icon="book" title={h.title} desc={`${h.chapter} · 进度 ${Math.round(h.position * 100)}%`} />
+                <div key={h.itemId} className="row-item">
+                  <span className="ric"><Icon name="book" size={19} /></span>
+                  <span className="rmain">
+                    <div className="rtitle">{h.title}</div>
+                    <div className="rdesc">{h.chapter} · 进度 {Math.round(h.position * 100)}%</div>
+                  </span>
+                  {h.itemId.startsWith('local-') && h.chapterId && (
+                    <button className="badge" style={{ padding: '5px 12px', fontSize: 11.5 }}
+                      onClick={() => nav(`/reader/${h.itemId.replace('local-', '')}/${h.chapterId}${h.pageIndex ? `?p=${h.pageIndex}` : ''}`)}>
+                      继续
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           )}

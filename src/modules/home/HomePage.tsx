@@ -8,6 +8,7 @@ import { getSource, dedup, type WorkItem } from '../../services/sources'
 const quicks: { icon: IconName; label: string; to?: string; wip?: boolean }[] = [
   { icon: 'search', label: '搜索', to: '/search' },
   { icon: 'compass', label: '发现', to: '/discovery' },
+  { icon: 'book', label: '书架', to: '/library' },
   { icon: 'sparkle', label: 'AI 助手', wip: true },
   { icon: 'tool', label: '工具箱', wip: true },
 ]
