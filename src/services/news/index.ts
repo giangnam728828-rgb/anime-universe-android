@@ -340,15 +340,11 @@ export async function fetchNews(force = false): Promise<NewsResult> {
     return true
   })
 
-  // 阶段6.3：日文条目翻译（开启且配置了 key 才执行；缓存命中不重译；失败回退原文不阻塞）
+  // 阶段6.3/6.4：日文翻译
+  // 1) 缓存命中 → 即时应用（已翻译文章永不重译）
+  // 2) 未缓存 → 后台批量翻译（fire-and-forget，不阻塞列表加载；每批完成广播事件，页面自行增量刷新）
   const cfg = getTransCfg()
   if (cfg.enabled && cfg.apiKey) {
-    const need = deduped
-      .filter((n) => n.lang === 'ja' && !getTransCached(n.link))
-      .slice(0, 40) as TransInput[]
-    if (need.length) {
-      await translateNews(need).catch(() => 0)
-    }
     deduped.forEach((n) => {
       if (n.lang !== 'ja') return
       const c = getTransCached(n.link)
@@ -358,6 +354,12 @@ export async function fetchNews(force = false): Promise<NewsResult> {
         n.translated = true
       }
     })
+    const need = deduped
+      .filter((n) => n.lang === 'ja' && !n.translated)
+      .slice(0, 60) as TransInput[]
+    if (need.length) {
+      void translateNews(need).catch(() => 0) // 后台执行，写缓存+广播
+    }
   }
 
   lastFetchAt = Date.now()

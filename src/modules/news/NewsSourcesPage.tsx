@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Icon from '../../components/Icon'
 import { Section } from '../../components/ui'
 import { FEEDS, getSourceStatuses, setSourceEnabled, testSource, type SourceStatus } from '../../services/news'
-import { clearTransCache, getTransCfg, setTransCfg, type TransCfg } from '../../services/translate'
+import { clearTransCache, getTransCfg, PRESETS, setTransCfg, type TransCfg } from '../../services/translate'
 
 /** 资讯来源管理：名称/语言/分类/启用/最近测试/HTTP码/耗时/失败原因/单独测试 + 日文翻译设置 */
 export default function NewsSourcesPage() {
@@ -86,22 +86,44 @@ export default function NewsSourcesPage() {
           <div className="row-item" style={{ justifyContent: 'space-between' }}>
             <span className="rmain">
               <div className="rtitle">目标语言</div>
-              <div className="rdesc">翻译输出简体或繁体中文</div>
+              <div className="rdesc">{cfg.provider === 'deepl' ? 'DeepL 免费版仅支持简体中文' : '翻译输出简体或繁体中文'}</div>
             </span>
-            <button className="seg-mini" onClick={() => upd({ target: cfg.target === 'zh-CN' ? 'zh-TW' : 'zh-CN' })}>
+            <button className="seg-mini" disabled={cfg.provider === 'deepl'}
+              onClick={() => upd({ target: cfg.target === 'zh-CN' ? 'zh-TW' : 'zh-CN' })}
+              style={cfg.provider === 'deepl' ? { opacity: 0.5 } : undefined}>
               {cfg.target === 'zh-CN' ? '简体中文' : '繁體中文'}
             </button>
           </div>
           <div className="row-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-            <div className="rtitle">OpenAI 兼容接口配置（密钥仅存本机）</div>
-            <input className="txt" placeholder="接口地址，如 https://api.openai.com/v1"
-              value={cfg.baseUrl} onChange={(e) => upd({ baseUrl: e.target.value })} />
-            <input className="txt" placeholder="API Key（仅保存在手机本地，不上传）" type="password"
-              value={cfg.apiKey} onChange={(e) => upd({ apiKey: e.target.value })} />
-            <input className="txt" placeholder="模型，如 gpt-4o-mini"
-              value={cfg.model} onChange={(e) => upd({ model: e.target.value })} />
+            <div className="rtitle">翻译引擎（前两个免费，实测国内直连可用）</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {PRESETS.map((p) => (
+                <button key={p.id} className={'seg-mini' + (cfg.baseUrl === p.baseUrl ? ' on' : '')}
+                  onClick={() => upd({ provider: p.provider, baseUrl: p.baseUrl, model: p.model })}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
             <div className="rdesc">
-              费用由你选择的服务商按用量计费（如 gpt-4o-mini 约 $0.15/百万输入 token），
+              {PRESETS.find((p) => p.baseUrl === cfg.baseUrl)?.desc || ''}
+              {' · 注册：'}{PRESETS.find((p) => p.baseUrl === cfg.baseUrl)?.signup}
+            </div>
+          </div>
+          <div className="row-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+            <div className="rtitle">密钥配置（仅保存在手机本地，不上传）</div>
+            {cfg.baseUrl !== PRESETS[2].baseUrl && (
+              <input className="txt" placeholder="接口地址（选预设后自动填好，可改）"
+                value={cfg.baseUrl} onChange={(e) => upd({ baseUrl: e.target.value })} />
+            )}
+            <input className="txt" placeholder={cfg.provider === 'deepl' ? 'DeepL API Key（Free 版以 :fx 结尾）' : 'API Key（如智谱/硅基流动控制台创建）'} type="password"
+              value={cfg.apiKey} onChange={(e) => upd({ apiKey: e.target.value })} />
+            {cfg.provider === 'openai' && (
+              <input className="txt" placeholder="模型名（预设自动填好，可改）"
+                value={cfg.model} onChange={(e) => upd({ model: e.target.value })} />
+            )}
+            <div className="rdesc">
+              费用说明：智谱 glm-4-flash 完全免费；硅基流动免费模型档免费；
+              DeepL 免费版每月 50 万字符；其他自定义接口按所选服务商计费。
               本应用不承诺免费无限翻译。翻译结果按文章缓存，刷新不重复计费。
             </div>
             <div style={{ display: 'flex', gap: 8 }}>

@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import { EmptyState, Loading } from '../../components/ui'
 import NewsImage from '../../components/NewsImage'
 import { useAsync } from '../../hooks/useAsync'
 import { fetchNews, type NewsItem } from '../../services/news'
+import { transEvents } from '../../services/translate'
 
 const CATS = ['全部', '动漫', '漫画', '游戏', '二次元', '英文资讯'] as const
 type Cat = (typeof CATS)[number]
@@ -15,6 +16,20 @@ export default function NewsPage() {
   const [cat, setCat] = useState<Cat>('全部')
   const [shown, setShown] = useState(PAGE)
   const { loading, data, error, retry } = useAsync(() => fetchNews(), [])
+
+  // 后台翻译每完成一批 → 防抖刷新（原文先出，中文几秒后自动跟上）
+  useEffect(() => {
+    let timer: number | undefined
+    const onBatch = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => retry(), 1200)
+    }
+    transEvents.addEventListener('batch', onBatch)
+    return () => {
+      transEvents.removeEventListener('batch', onBatch)
+      window.clearTimeout(timer)
+    }
+  }, [retry])
 
   const all = data?.items || []
   // 分类数量统计（chips 徽标）
