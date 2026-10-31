@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { imgFallback } from '../../utils/proxy'
+import NewsImage from '../../components/NewsImage'
 import { useAsync } from '../../hooks/useAsync'
 import { fetchNews } from '../../services/news'
 
@@ -27,7 +27,7 @@ export default function NewsSection() {
       {items.map((n) => (
         <button key={n.id} className="news-card" onClick={() => nav(`/newsview/${encodeURIComponent(n.link)}`)}>
           <div className="nc-thumb">
-            {n.image && <img src={n.image} referrerPolicy="no-referrer" loading="lazy" alt="" onError={imgFallback} />}
+            {n.image && <NewsImage src={n.image} className="nc-thumb" />}
           </div>
           <div className="nc-title">{n.title}</div>
           <div className="nc-src">{n.source}</div>

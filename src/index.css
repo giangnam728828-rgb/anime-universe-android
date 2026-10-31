@@ -576,3 +576,45 @@ input { font-family: inherit; color: inherit; }
 .nv-body { display: flex; flex-direction: column; gap: 14px; }
 .nv-body p { font-size: 15px; line-height: 1.85; color: var(--text); }
 .nv-body img { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
+
+/* ========== 来源管理 + 独立图片（run #16）========== */
+.news-group {
+  font-size: 11.5px; color: var(--muted);
+  margin: 4px 0 8px; padding-left: 2px;
+  display: flex; align-items: center; gap: 6px;
+}
+.news-group::before { content: ''; width: 3px; height: 11px; border-radius: 2px; background: var(--primary); }
+.src-log {
+  display: flex; flex-wrap: wrap; gap: 8px; width: 100%;
+  font-size: 10.5px; color: var(--muted);
+  background: var(--bg2); border-radius: 8px; padding: 7px 10px;
+}
+.src-log .ok { color: #34d399; font-weight: 600; }
+.src-log .bad { color: #f87171; font-weight: 600; }
+.src-err { width: 100%; font-size: 11px; color: #f87171; line-height: 1.5; }
+.src-test {
+  align-self: flex-end; padding: 5px 14px; border-radius: 999px;
+  font-size: 11.5px; color: var(--accent);
+  border: 1px solid rgba(56,189,248,0.4); background: rgba(56,189,248,0.08);
+}
+.src-test:disabled { opacity: 0.5; }
+.seg-mini {
+  padding: 5px 12px; border-radius: 999px; font-size: 11.5px;
+  color: var(--muted); background: var(--bg2); border: 1px solid var(--line);
+}
+.seg-mini.on { color: #fff; background: var(--primary); border-color: var(--primary); }
+.news-imgwrap { position: relative; flex-shrink: 0; border-radius: 10px; overflow: hidden; background: var(--bg2); }
+.news-imgwrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity 0.25s; }
+.news-imgspin {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+}
+.news-imgspin .spinner { width: 16px; height: 16px; border-width: 2px; }
+.news-imgph {
+  width: 92px; height: 62px; flex-shrink: 0;
+  border-radius: 10px; border: 1px dashed var(--line);
+  background: var(--bg2); color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  font-size: 9px; text-align: center; padding: 4px;
+}
+.news-imgph.nc-thumb { width: 100%; height: 96px; }
+.news-imgph span { line-height: 1.3; }

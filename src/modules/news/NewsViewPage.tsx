@@ -4,7 +4,6 @@ import Icon from '../../components/Icon'
 import { Loading, EmptyState } from '../../components/ui'
 import { fetchArticle, type Article } from '../../services/news'
 import { openExternal } from '../../utils/openUrl'
-import { imgFallback } from '../../utils/proxy'
 
 /** 内置资讯阅读页：不跳转，APP 内直接看正文；提取失败兜底系统浏览器 */
 export default function NewsViewPage() {
@@ -57,7 +56,7 @@ export default function NewsViewPage() {
             {article.blocks.map((b, i) =>
               b.type === 'img' && b.src ? (
                 <img key={i} src={b.src} referrerPolicy="no-referrer" loading="lazy"
-                  onError={imgFallback} alt="" />
+                  alt="" />
               ) : (
                 <p key={i}>{b.text}</p>
               ),
