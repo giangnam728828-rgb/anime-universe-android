@@ -31,9 +31,17 @@ export function dedup(items: WorkItem[]): WorkItem[] {
   })
 }
 
-/** 多来源聚合搜索：Promise.allSettled，单源失败不影响整体 */
+/** 单源超时：源卡住时快速放弃（Kazumi 式体验——快源先出，慢源不拖整页） */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('源超时')), ms)
+    p.then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) })
+  })
+}
+
+/** 多来源聚合搜索：Promise.allSettled + 每源 8s 超时，单源失败/超时不影响整体 */
 export async function searchAll(opts: { kw?: string; kind: WorkItem['kind']; genre?: string; sort?: string; page?: number }): Promise<{ items: WorkItem[]; failed: string[] }> {
-  const rs = await Promise.allSettled(SOURCES.map((s) => s.search(opts)))
+  const rs = await Promise.allSettled(SOURCES.map((s) => withTimeout(s.search(opts), 8000)))
   const items: WorkItem[] = []
   const failed: string[] = []
   rs.forEach((r, idx) => {

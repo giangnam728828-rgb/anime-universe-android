@@ -11,7 +11,7 @@ import { httpGetText } from '../api/nativeHttp'
 import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole } from './types'
 
 const BASE = 'https://api.bilibili.com'
-const HEADERS = { Referer: 'https://www.bilibili.com/', Accept: 'application/json' }
+const HEADERS = { Referer: 'https://www.bilibili.com/', Accept: 'application/json', Cookie: 'buvid3=AF3B4C9E-8B21-4C6A-9D0E-3F5A7B8C9D1Einfoc; b_nut=1700000000' }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const memCache = new Map<string, { t: number; v: any }>()
@@ -22,9 +22,9 @@ async function biliGet(path: string): Promise<any> {
   const hit = memCache.get(key)
   if (hit && Date.now() - hit.t < TTL) return hit.v
   let lastErr: unknown
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     try {
-      const r = await httpGetText(`${BASE}${path}`, 12000, HEADERS)
+      const r = await httpGetText(`${BASE}${path}`, 8000, HEADERS)
       if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
       const json = JSON.parse(r.text)
       if (json.code !== 0) throw new Error(json.message || `code ${json.code}`)

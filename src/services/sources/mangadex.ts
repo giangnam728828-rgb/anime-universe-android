@@ -23,9 +23,9 @@ async function mdGet(path: string): Promise<any> {
   const hit = memCache.get(path)
   if (hit && Date.now() - hit.t < TTL) return hit.v
   let lastErr: unknown
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     try {
-      const r = await httpGetText(`${BASE}${path}`, 15000)
+      const r = await httpGetText(`${BASE}${path}`, 10000)
       if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
       const json = JSON.parse(r.text)
       memCache.set(path, { t: Date.now(), v: json })
