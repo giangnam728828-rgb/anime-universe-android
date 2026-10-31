@@ -1,6 +1,9 @@
 import { useNavigate } from 'react-router-dom'
 import Icon, { type IconName } from '../../components/Icon'
-import { Section, EmptyState } from '../../components/ui'
+import { Section, EmptyState, Loading } from '../../components/ui'
+import WorkCard from '../../components/WorkCard'
+import { useAsync } from '../../hooks/useAsync'
+import { getSource, dedup, type WorkItem } from '../../services/sources'
 
 const quicks: { icon: IconName; label: string; to?: string; wip?: boolean }[] = [
   { icon: 'search', label: '搜索', to: '/search' },
@@ -11,6 +14,17 @@ const quicks: { icon: IconName; label: string; to?: string; wip?: boolean }[] = 
 
 export default function HomePage() {
   const nav = useNavigate()
+  const open = (w: WorkItem) => nav(`/detail/${w.sourceId}/${w.kind}/${w.workId}`)
+
+  const { loading, data, error, retry } = useAsync(async () => {
+    const src = getSource('anilist')
+    const [trending, popManga] = await Promise.all([
+      src.search({ kind: 'anime', sort: 'trending' }),
+      src.search({ kind: 'manga', sort: '热门' }),
+    ])
+    return { anime: dedup(trending.items).slice(0, 10), manga: dedup(popManga.items).slice(0, 10) }
+  }, [])
+
   return (
     <>
       <header className="page-head">
@@ -37,19 +51,33 @@ export default function HomePage() {
         </div>
       </Section>
 
-      <Section title="热门动漫" extra="阶段 3 接入">
-        <EmptyState icon="film" title="数据源待接入"
-          desc="将接入 AniList / Jikan 等公开动漫资料 API（阶段 3），接入前此处不展示任何虚构数据。" />
-      </Section>
+      {loading ? (
+        <Loading />
+      ) : error ? (
+        <EmptyState icon="info" title="内容加载失败" desc={error}
+          actionText="重试" onAction={retry} />
+      ) : data ? (
+        <>
+          <Section title="热门动漫" extra="AniList · Trending">
+            {data.anime.length === 0 ? <EmptyState title="暂无数据" /> : (
+              <div className="h-scroll">
+                {data.anime.map((w) => <WorkCard key={w.workId} w={w} onClick={() => open(w)} />)}
+              </div>
+            )}
+          </Section>
 
-      <Section title="热门漫画" extra="阶段 3 接入">
-        <EmptyState icon="book" title="数据源待接入"
-          desc="漫画资料与阅读功能将在阶段 3/4 实现，仅使用合法开放来源或本地导入。" />
-      </Section>
+          <Section title="热门漫画" extra="AniList · Popular">
+            {data.manga.length === 0 ? <EmptyState title="暂无数据" /> : (
+              <div className="h-scroll">
+                {data.manga.map((w) => <WorkCard key={w.workId} w={w} onClick={() => open(w)} />)}
+              </div>
+            )}
+          </Section>
+        </>
+      ) : null}
 
       <Section title="最新资讯" extra="阶段 5 接入">
-        <EmptyState icon="news" title="数据源待接入"
-          desc="资讯将通过公开 RSS 接入（阶段 5）。" />
+        <EmptyState icon="news" title="数据源待接入" desc="资讯将通过公开 RSS 接入（阶段 5）。" />
       </Section>
     </>
   )

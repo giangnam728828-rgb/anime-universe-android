@@ -6,6 +6,7 @@ import DiscoveryPage from './modules/discovery/DiscoveryPage'
 import SearchPage from './modules/search/SearchPage'
 import FavoritesPage from './modules/favorites/FavoritesPage'
 import ProfilePage from './modules/profile/ProfilePage'
+import DetailPage from './modules/detail/DetailPage'
 import { useSettings } from './stores/settings'
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/search" element={<SearchPage />} />
           <Route path="/favorites" element={<FavoritesPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/detail/:sourceId/:kind/:workId" element={<DetailPage />} />
           <Route path="*" element={<HomePage />} />
         </Route>
       </Routes>

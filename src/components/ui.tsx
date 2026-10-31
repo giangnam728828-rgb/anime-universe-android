@@ -67,3 +67,13 @@ export function Modal({ open, onClose, title, children }: {
     </div>
   )
 }
+
+/* 加载中 */
+export function Loading({ text = '加载中…' }: { text?: string }) {
+  return (
+    <div className="loading">
+      <span className="spinner" />
+      <span>{text}</span>
+    </div>
+  )
+}

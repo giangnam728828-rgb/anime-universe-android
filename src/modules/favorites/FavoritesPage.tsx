@@ -55,15 +55,15 @@ export default function FavoritesPage() {
           <Section title="我的收藏" extra={<button onClick={clearAll} style={{ color: 'var(--muted)', fontSize: 11.5 }}>清空</button>}>
             <div className="rows">
               {favs.map((f) => (
-                <div key={f.id} className="row-item">
+                <div key={f.id} className="row-item" onClick={() => { if (f.id.startsWith('anilist-')) nav(f.id.replace('-', '/').replace('-', '/')) }}>
                   <span className="ric"><Icon name={f.kind === 'anime' ? 'film' : 'book'} size={20} /></span>
                   <span className="rmain">
                     <div className="rtitle">{f.title}</div>
-                    <div className="rdesc">{f.kind === 'anime' ? '动漫' : '漫画'} · 收藏于 {fmt(f.addedAt)}</div>
+                    <div className="rdesc">{f.kind === 'anime' ? '动漫' : '漫画'} · 收藏于 {fmt(f.addedAt)}{f.id.startsWith('anilist-') ? ' · 点击查看详情' : ''}</div>
                   </span>
-                  <button onClick={() => remove(f.id)} aria-label="取消收藏" style={{ color: 'var(--muted)', display: 'flex' }}>
+                  <span onClick={(e) => { e.stopPropagation(); remove(f.id) }} aria-label="取消收藏" style={{ color: 'var(--muted)', display: 'flex', padding: 6 }}>
                     <Icon name="x" size={16} />
-                  </button>
+                  </span>
                 </div>
               ))}
             </div>
