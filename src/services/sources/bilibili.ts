@@ -7,11 +7,78 @@
  *  搜索接口依赖浏览器 cookie（实测假 cookie 返回空结果），故本适配器不提供关键词搜索，
  *  关键词搜索由 AniList/MangaDex 承担；B 站源用于浏览（首页/发现页的中文动漫内容）。
  */
-import { httpGetText } from '../api/nativeHttp'
+import { httpGetText, httpPostJson } from '../api/nativeHttp'
 import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole } from './types'
 
 const BASE = 'https://api.bilibili.com'
+const UA_BILI = 'Mozilla/5.0 (Linux; Android 14) AnimeUniverse/0.6'
 const HEADERS = { Referer: 'https://www.bilibili.com/', Accept: 'application/json', Cookie: 'buvid3=AF3B4C9E-8B21-4C6A-9D0E-3F5A7B8C9D1Einfoc; b_nut=1700000000' }
+
+/* ── B站漫画（mc 搜索，公开网页端接口；6.4.2 实测 Search 可用，详情/分类接口被风控）── */
+const MANGA_API = 'https://manga.bilibili.com/twirp/comic.v1.Comic/Search?device=pc&platform=web'
+
+let buvidCk: string | null = null
+/** spi 指纹接口拿真实 buvid（公开无登录）；失败用静态兜底 */
+async function ensureBuvid(): Promise<string> {
+  if (buvidCk) return buvidCk
+  try {
+    const r = await httpGetText(`${BASE}/x/frontend/finger/spi`, 8000)
+    if (r.status === 200) {
+      const d = JSON.parse(r.text)?.data
+      if (d?.b_3) {
+        buvidCk = `buvid3=${d.b_3}; buvid4=${d.b_4 || ''}`
+        return buvidCk
+      }
+    }
+  } catch { /* 忽略，走兜底 */ }
+  return HEADERS.Cookie!
+}
+
+const mangaDetailMap = new Map<string, WorkItem>()
+const mangaAuthors = new Map<string, string[]>()
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function mapMangaComic(it: any): WorkItem | null {
+  const id = it.id ?? it.comic_id
+  const title = String(it.org_title || it.real_title || it.title || '').replace(/<[^>]*>/g, '').trim()
+  if (!id || !title) return null
+  const wid = String(id)
+  if (Array.isArray(it.author_name) && it.author_name.length) mangaAuthors.set(wid, it.author_name.filter(Boolean))
+  return {
+    sourceId: 'bilibili',
+    workId: wid,
+    kind: 'manga',
+    title,
+    cover: it.vertical_cover || it.square_cover || it.horizontal_cover || undefined,
+    genres: (it.styles || []).filter(Boolean),
+    statusCn: it.is_finish === 1 ? '已完结' : it.is_finish === 0 ? '连载中' : undefined,
+    formatCn: '漫画（B漫）',
+    titleLang: 'zh',
+    descLang: 'zh',
+  }
+}
+
+async function mangaSearch(kw: string): Promise<SearchResult> {
+  const ck = await ensureBuvid()
+  const r = await httpPostJson(
+    MANGA_API,
+    { 'User-Agent': UA_BILI, Referer: 'https://manga.bilibili.com/', Accept: 'application/json', Cookie: ck },
+    { keyWord: kw, pageNum: 1, pageSize: 20 },
+    10000,
+  )
+  if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
+  const json = JSON.parse(r.text)
+  if (json.code !== 0) throw new Error(json.msg || `code ${json.code}`)
+  const items = (json?.data?.list || []).map(mapMangaComic).filter(Boolean) as WorkItem[]
+  for (const it of items) {
+    mangaDetailMap.set(it.workId, it)
+    if (mangaDetailMap.size > 300) {
+      const first = mangaDetailMap.keys().next().value
+      if (first !== undefined) mangaDetailMap.delete(first)
+    }
+  }
+  return { items, hasNext: false }
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const memCache = new Map<string, { t: number; v: any }>()
@@ -81,9 +148,11 @@ const bilibili: SourceAdapter = {
   name: '哔哩哔哩',
 
   async search(opts: SearchOptions): Promise<SearchResult> {
-    // 无关键词：浏览模式（首页/发现页中文动漫）
-    // 有关键词：B 站搜索需 cookie，本适配器不参与关键词搜索（返回空，不报错）
-    if (opts.kw?.trim()) return { items: [], hasNext: false }
+    // 关键词搜索：漫画走 B漫 Search（实测可用）；动漫 B站搜索需登录 cookie，不参与
+    if (opts.kw?.trim()) {
+      if (opts.kind === 'manga') return mangaSearch(opts.kw.trim())
+      return { items: [], hasNext: false }
+    }
     if (opts.kind !== 'anime') return { items: [], hasNext: false }
     const year = yearOfPage(opts.page ?? 1)
     const [fan, guochuang] = await Promise.all([listSeason(1, year), listSeason(2, year)])
@@ -95,6 +164,17 @@ const bilibili: SourceAdapter = {
   },
 
   async getDetail(_kind: Kind, workId: string): Promise<WorkDetail> {
+    // B漫条目：详情接口被风控，用搜索时缓存的条目数据（无简介，详情页显示基础信息+B漫跳转）
+    const cached = mangaDetailMap.get(workId)
+    if (cached && cached.kind === 'manga') {
+      const staff: StaffRole[] = (mangaAuthors.get(workId) || []).slice(0, 6).map((n) => ({ role: '作者', name: n }))
+      return {
+        ...cached,
+        studios: [],
+        staff,
+        siteUrl: `https://manga.bilibili.com/detail/mc${workId}`,
+      }
+    }
     const json = await biliGet(`/pgc/view/web/season?season_id=${encodeURIComponent(workId)}`)
     const r = json?.result
     if (!r?.title) throw new Error('作品不存在')
