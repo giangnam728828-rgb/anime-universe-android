@@ -1,5 +1,6 @@
 /** 内容来源注册表：每来源独立适配器，单源故障不影响其他来源 */
 import type { SourceAdapter, WorkItem } from './types'
+import { normalizeCover } from '../../utils/cover'
 import anilist from './anilist'
 import jikan from './jikan'
 import bilibili from './bilibili'
@@ -48,7 +49,9 @@ export async function searchAll(opts: { kw?: string; kind: WorkItem['kind']; gen
     if (r.status === 'fulfilled') items.push(...r.value.items)
     else failed.push(SOURCES[idx].name)
   })
-  return { items: dedup(items), failed }
+  // P0 修复：统一把所有来源封面的 http:// 升级为 https://（Capacitor WebView mixed-content 拦截 http）
+  const norm = items.map((i) => (i.cover ? { ...i, cover: normalizeCover(i.cover) } : i))
+  return { items: dedup(norm), failed }
 }
 
 export type { WorkItem, WorkDetail, SearchOptions, SearchResult, Kind } from './types'

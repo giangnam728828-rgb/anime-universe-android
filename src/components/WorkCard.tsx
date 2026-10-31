@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import Icon from './Icon'
 import { SOURCE_NAMES, getSource, type WorkItem } from '../services/sources'
+import { normalizeCover } from '../utils/cover'
 
 /** 点击即预取详情（fire-and-forget），详情页 useAsync 命中内存缓存秒开 */
 function prefetch(w: WorkItem) {
@@ -7,10 +9,23 @@ function prefetch(w: WorkItem) {
 }
 
 export default function WorkCard({ w, onClick }: { w: WorkItem; onClick: () => void }) {
+  const [imgFailed, setImgFailed] = useState(false)
+  const cover = normalizeCover(w.cover)
+  const showImg = !!cover && !imgFailed
+
   return (
     <button className="work-card" onClick={() => { prefetch(w); onClick() }}>
       <div className="wc-cover" style={w.coverColor ? { background: w.coverColor } : undefined}>
-        {w.cover ? <img src={w.cover} loading="lazy" alt="" /> : <Icon name="film" size={26} />}
+        {showImg ? (
+          <img
+            src={cover}
+            loading="lazy"
+            alt=""
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <Icon name="film" size={26} />
+        )}
       </div>
       <div className="wc-title">{w.title}</div>
       <div className="wc-meta">
