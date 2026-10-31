@@ -18,13 +18,15 @@ export default function NewsPage() {
 
   const all = data?.items || []
   // 分类数量统计（chips 徽标）
+  const isZh = (n: NewsItem) => n.lang === 'zh' || (n.lang === 'ja' && n.translated === true)
   const countOf = (c: Cat) => {
-    if (c === '全部') return all.filter((n) => n.lang === 'zh').length
+    if (c === '全部') return all.filter(isZh).length
     if (c === '英文资讯') return all.filter((n) => n.lang === 'en').length
-    return all.filter((n) => n.lang === 'zh' && n.category === c).length
+    return all.filter((n) => isZh(n) && n.category === c).length
   }
-  const zh = all.filter((n) => n.lang === 'zh' && (cat === '全部' || n.category === cat)).slice(0, shown)
-  const zhTotal = all.filter((n) => n.lang === 'zh' && (cat === '全部' || n.category === cat)).length
+  const zh = all.filter((n) => isZh(n) && (cat === '全部' || n.category === cat)).slice(0, shown)
+  const zhTotal = all.filter((n) => isZh(n) && (cat === '全部' || n.category === cat)).length
+  const jaRaw = all.filter((n) => n.lang === 'ja' && n.translated !== true)
   const en = cat === '全部' || cat === '英文资讯'
     ? all.filter((n) => n.lang === 'en')
     : []
@@ -66,7 +68,7 @@ export default function NewsPage() {
 
           {zh.length > 0 && (
             <>
-              <div className="news-group">中文来源{cat !== '全部' ? ` · ${cat}` : ''}</div>
+              <div className="news-group">中文来源{cat !== '全部' ? ` · ${cat}` : ''}（含机器翻译日文）</div>
               <div className="news-list">{zh.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}</div>
               {zhTotal > shown && (
                 <button className="load-more" onClick={() => setShown((n) => n + PAGE)}>
@@ -80,10 +82,17 @@ export default function NewsPage() {
           )}
           {zh.length === 0 && cat !== '英文资讯' && (
             <div className="news-warn">
-              {all.some((n) => n.lang === 'zh')
+              {all.some((n) => n.lang === 'zh' || n.translated)
                 ? `暂无「${cat}」分类的中文内容（其他分类可能有）`
                 : '中文来源当前不可用（如巴哈姆特GNN网络不可达），已保留并在来源管理中显示原因。'}
             </div>
+          )}
+          {jaRaw.length > 0 && (
+            <>
+              <div className="news-group">日文来源（原文，未开启翻译）</div>
+              <div className="news-warn">以下为日文原文。在「来源管理 → 翻译设置」开启自动翻译后，将显示中文并标注「机器翻译」。</div>
+              <div className="news-list">{jaRaw.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}</div>
+            </>
           )}
           {en.length > 0 && (
             <>
@@ -108,6 +117,8 @@ export function NewsRow({ n, nav }: { n: NewsItem; nav: (to: string) => void }) 
         {n.summary && <div className="news-desc">{n.summary}</div>}
         <div className="news-meta">
           <span className="news-src">{n.source}</span>
+          {n.lang === 'ja' && n.translated && <span className="mtag">机器翻译</span>}
+          {n.lang === 'ja' && !n.translated && <span className="mtag ja">日文</span>}
           {n.date && <span>{fmtDate(n.date)}</span>}
           <span style={{ marginLeft: 'auto', display: 'flex', color: 'var(--muted)' }}><Icon name="chevron" size={13} /></span>
         </div>

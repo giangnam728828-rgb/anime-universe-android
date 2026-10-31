@@ -33,3 +33,40 @@ export async function httpGetText(url: string, timeoutMs = 12000): Promise<HttpR
     clearTimeout(timer)
   }
 }
+
+/** POST JSON（翻译 API 等，同样走 CapacitorHttp 原生层，无 CORS 限制） */
+export async function httpPostJson(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  timeoutMs = 30000,
+): Promise<HttpResult> {
+  const t0 = Date.now()
+  if (Capacitor.isNativePlatform()) {
+    const r = await CapacitorHttp.post({
+      url,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      data: body,
+      responseType: 'text',
+      connectTimeout: timeoutMs,
+      readTimeout: timeoutMs,
+    })
+    const data = r.data
+    const text = typeof data === 'string' ? data : JSON.stringify(data)
+    return { status: r.status, text, ms: Date.now() - t0 }
+  }
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    })
+    const text = await r.text()
+    return { status: r.status, text, ms: Date.now() - t0 }
+  } finally {
+    clearTimeout(timer)
+  }
+}

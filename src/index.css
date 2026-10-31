@@ -625,3 +625,17 @@ input { font-family: inherit; color: inherit; }
   margin-bottom: 8px; padding-left: 2px;
 }
 .news-stat b, .news-stat span { color: var(--muted); }
+
+/* 阶段6.3 翻译标记与设置 */
+.mtag {
+  font-size: 9px; padding: 1.5px 6px; border-radius: 999px;
+  background: rgba(56,189,248,0.12); color: var(--accent);
+  border: 1px solid rgba(56,189,248,0.3);
+}
+.mtag.ja { background: rgba(148,163,184,0.12); color: var(--muted); border-color: var(--line); }
+.txt {
+  width: 100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg2); color: var(--text);
+  font-size: 12.5px; box-sizing: border-box;
+}
+.txt::placeholder { color: var(--muted); }

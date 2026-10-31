@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import Icon from '../../components/Icon'
 import { Section } from '../../components/ui'
 import { FEEDS, getSourceStatuses, setSourceEnabled, testSource, type SourceStatus } from '../../services/news'
+import { clearTransCache, getTransCfg, setTransCfg, type TransCfg } from '../../services/translate'
 
-/** 资讯来源管理：名称/语言/分类/启用/最近测试/HTTP码/耗时/失败原因/单独测试 */
+/** 资讯来源管理：名称/语言/分类/启用/最近测试/HTTP码/耗时/失败原因/单独测试 + 日文翻译设置 */
 export default function NewsSourcesPage() {
   const [statuses, setStatuses] = useState<Record<string, SourceStatus>>({})
   const [testing, setTesting] = useState<string | null>(null)
+  const [cfg, setCfg] = useState<TransCfg>(() => getTransCfg())
 
   const load = useCallback(() => setStatuses(getSourceStatuses()), [])
   useEffect(() => { load() }, [load])
@@ -18,7 +20,14 @@ export default function NewsSourcesPage() {
     setTesting(null)
   }
 
+  const upd = (p: Partial<TransCfg>) => {
+    const next = { ...cfg, ...p }
+    setCfg(next)
+    setTransCfg(p)
+  }
+
   const fmtT = (t?: number) => (t ? new Date(t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '—')
+  const LANG_LABEL: Record<string, string> = { zh: '中文', ja: '日文', en: '英文' }
 
   return (
     <div className="page">
@@ -37,7 +46,7 @@ export default function NewsSourcesPage() {
                 <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 10 }}>
                   <span className="ric"><Icon name="news" size={19} /></span>
                   <span className="rmain">
-                    <div className="rtitle">{f.name} <span className="badge">{f.lang === 'zh' ? '中文' : '英文'}</span></div>
+                    <div className="rtitle">{f.name} <span className="badge">{LANG_LABEL[f.lang] || f.lang}</span></div>
                     <div className="rdesc">{f.category}{f.note ? ` · ${f.note}` : ''}</div>
                   </span>
                   <button className={'seg-mini' + (s.enabled !== false ? ' on' : '')}
@@ -49,6 +58,7 @@ export default function NewsSourcesPage() {
                   <span>最近测试 {fmtT(s.lastTestAt)}</span>
                   <span>HTTP {s.lastStatus ?? '—'}</span>
                   <span>{s.lastMs != null ? `${s.lastMs}ms` : '—'}</span>
+                  {s.itemsCount != null && <span>{s.itemsCount} 条</span>}
                   <span className={s.ok ? 'ok' : 'bad'}>{s.ok === undefined ? '未测试' : s.ok ? '正常' : cooling ? '冷却中' : '失败'}</span>
                 </div>
                 {s.lastError && <div className="src-err">失败原因：{s.lastError}</div>}
@@ -58,6 +68,46 @@ export default function NewsSourcesPage() {
               </div>
             )
           })}
+        </div>
+      </Section>
+
+      <Section title="日文资讯自动翻译（可选，默认关闭）">
+        <div className="rows">
+          <div className="row-item" style={{ justifyContent: 'space-between' }}>
+            <span className="rmain">
+              <div className="rtitle">启用机器翻译</div>
+              <div className="rdesc">日文标题/摘要 → 中文；未开启时日文以原文显示</div>
+            </span>
+            <button className={'seg-mini' + (cfg.enabled ? ' on' : '')}
+              onClick={() => upd({ enabled: !cfg.enabled })}>
+              {cfg.enabled ? '已开启' : '已关闭'}
+            </button>
+          </div>
+          <div className="row-item" style={{ justifyContent: 'space-between' }}>
+            <span className="rmain">
+              <div className="rtitle">目标语言</div>
+              <div className="rdesc">翻译输出简体或繁体中文</div>
+            </span>
+            <button className="seg-mini" onClick={() => upd({ target: cfg.target === 'zh-CN' ? 'zh-TW' : 'zh-CN' })}>
+              {cfg.target === 'zh-CN' ? '简体中文' : '繁體中文'}
+            </button>
+          </div>
+          <div className="row-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+            <div className="rtitle">OpenAI 兼容接口配置（密钥仅存本机）</div>
+            <input className="txt" placeholder="接口地址，如 https://api.openai.com/v1"
+              value={cfg.baseUrl} onChange={(e) => upd({ baseUrl: e.target.value })} />
+            <input className="txt" placeholder="API Key（仅保存在手机本地，不上传）" type="password"
+              value={cfg.apiKey} onChange={(e) => upd({ apiKey: e.target.value })} />
+            <input className="txt" placeholder="模型，如 gpt-4o-mini"
+              value={cfg.model} onChange={(e) => upd({ model: e.target.value })} />
+            <div className="rdesc">
+              费用由你选择的服务商按用量计费（如 gpt-4o-mini 约 $0.15/百万输入 token），
+              本应用不承诺免费无限翻译。翻译结果按文章缓存，刷新不重复计费。
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="src-test" onClick={() => clearTransCache()}>清除翻译缓存</button>
+            </div>
+          </div>
         </div>
       </Section>
 

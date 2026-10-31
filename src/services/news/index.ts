@@ -10,6 +10,7 @@
  *    CCC追漫台(纯SPA无接口) 腾讯动漫新闻(已下线) 东立(无RSS,ASPX页) acgdoge(站点异常)
  */
 import { httpGetText } from '../api/nativeHttp'
+import { getTransCfg, getTransCached, translateNews, type TransInput } from '../translate'
 
 export type NewsCategory = '综合' | '动漫' | '漫画' | '游戏' | '二次元' | '英文'
 
@@ -18,11 +19,13 @@ export interface NewsItem {
   title: string
   link: string
   source: string
-  lang: 'zh' | 'en'
+  lang: 'zh' | 'en' | 'ja'
   category: NewsCategory
   date?: string
   summary?: string
   image?: string
+  /** 日文条目且已翻译成中文（机器翻译标记） */
+  translated?: boolean
 }
 
 export interface FeedMeta {
@@ -31,7 +34,7 @@ export interface FeedMeta {
   /** 单 feed URL；爱奇漫为多分类 feed（kind=multi-rss 时使用 subFeeds） */
   url?: string
   subFeeds?: { url: string; category: NewsCategory; label: string }[]
-  lang: 'zh' | 'en'
+  lang: 'zh' | 'en' | 'ja'
   category: NewsCategory
   kind: 'rss' | 'cngal' | 'multi-rss'
   note?: string
@@ -50,6 +53,8 @@ export const FEEDS: FeedMeta[] = [
     ],
   },
   { id: 'cngal', name: 'CnGal资料站', url: 'https://api.cngal.org/api/home/GetHomeNewsView', lang: 'zh', category: '游戏', kind: 'cngal' },
+  { id: 'animeanime', name: 'アニメ！アニメ！', url: 'https://animeanime.jp/rss/index.rdf', lang: 'ja', category: '动漫', kind: 'rss', note: '日文动漫新闻，可配翻译' },
+  { id: 'nataliec', name: 'コミックナタリー', url: 'https://news.yahoo.co.jp/rss/media/nataliec/all.xml', lang: 'ja', category: '漫画', kind: 'rss', note: '日文漫画/动画化新闻（Yahoo官方转载RSS），可配翻译' },
   { id: 'gnn', name: '巴哈姆特GNN', url: 'https://gnn.gamer.com.tw/rss_utf8.xml', lang: 'zh', category: '综合', kind: 'rss', note: '当前网络不可达，保留备用' },
   { id: 'mal', name: 'MyAnimeList', url: 'https://myanimelist.net/rss/news.xml', lang: 'en', category: '英文', kind: 'rss' },
   { id: 'ac', name: 'Anime Corner', url: 'https://animecorner.me/feed/', lang: 'en', category: '英文', kind: 'rss' },
@@ -58,6 +63,11 @@ export const FEEDS: FeedMeta[] = [
 /** 分类自动识别（关键词 → 分类；无法判断归「综合」） */
 export function classify(text: string): NewsCategory {
   const t = text.toLowerCase()
+  // 日文关键词（阶段6.3）
+  if (/漫画|コミック|連載|単行本|新刊|コミカライズ|マンガ/.test(t)) return '漫画'
+  if (/アニメ|アニメ化|放送|劇場版|声優|新作aw|アニメーション|アニメ映画|シーズン/.test(t)) return '动漫'
+  if (/ゲーム|ゲーム化|コンシューマ|アプリ游戏|スイッチ|プレイステーション/.test(t)) return '游戏'
+  if (/フィギュア|グッズ|コラボ|イベント|マン展|原画|イラスト|くじ|カレンダー|ラバーストラップ|アクスタ/.test(t)) return '二次元'
   if (/漫画|manga|comic|连载|单行本|新刊/.test(t)) return '漫画'
   if (/动漫|动画|anime|新番|剧场版|放送|声优|番剧/.test(t)) return '动漫'
   if (/游戏|新作|发售|steam|主机|switch|playstation|galgame|视觉小说|独立游戏|rpg|dlc/.test(t)) return '游戏'
@@ -147,7 +157,7 @@ function parseRss(xml: string, feed: FeedMeta, forcedCategory?: NewsCategory): N
       n.querySelector('link')?.getAttribute('href')?.trim() ||
       ''
     if (!title || !link) return
-    const date = n.querySelector('pubDate, published, updated')?.textContent || undefined
+    const date = n.querySelector('pubDate, published, updated, dc\:date')?.textContent || undefined
     const rawDesc =
       n.querySelector('description')?.textContent ||
       n.querySelector('summary')?.textContent ||
@@ -312,11 +322,12 @@ export async function fetchNews(force = false): Promise<NewsResult> {
   })
 
   const byTime = (a: NewsItem, b: NewsItem) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-  const zh = items.filter((i) => i.lang === 'zh').sort(byTime)
+  const zh = items.filter((i) => i.lang === 'zh' || (i.lang === 'ja' && i.translated)).sort(byTime)
+  const jaRaw = items.filter((i) => i.lang === 'ja' && !i.translated).sort(byTime)
   const en = items.filter((i) => i.lang === 'en').sort(byTime)
 
   // 去重：原文 URL 优先，标题兜底
-  const merged = [...zh, ...en]
+  const merged = [...zh, ...jaRaw, ...en]
   const seenLink = new Set<string>()
   const seenTitle = new Set<string>()
   const deduped = merged.filter((i) => {
@@ -328,6 +339,26 @@ export async function fetchNews(force = false): Promise<NewsResult> {
     seenTitle.add(tk)
     return true
   })
+
+  // 阶段6.3：日文条目翻译（开启且配置了 key 才执行；缓存命中不重译；失败回退原文不阻塞）
+  const cfg = getTransCfg()
+  if (cfg.enabled && cfg.apiKey) {
+    const need = deduped
+      .filter((n) => n.lang === 'ja' && !getTransCached(n.link))
+      .slice(0, 40) as TransInput[]
+    if (need.length) {
+      await translateNews(need).catch(() => 0)
+    }
+    deduped.forEach((n) => {
+      if (n.lang !== 'ja') return
+      const c = getTransCached(n.link)
+      if (c) {
+        n.title = c.t
+        n.summary = c.s || n.summary
+        n.translated = true
+      }
+    })
+  }
 
   lastFetchAt = Date.now()
   lastResult = { items: deduped, failed, fromCache }
