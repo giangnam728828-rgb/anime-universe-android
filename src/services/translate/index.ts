@@ -90,25 +90,40 @@ export const transEvents = new EventTarget()
 
 export interface TransInput { link: string; title: string; summary?: string }
 
-/** 翻译日文条目（批量）。返回成功条数；失败抛错由调用方决定回退 */
+/** 翻译日文条目。LLM 引擎用单条并发（glm-4-flash 对批量 JSON 输出不稳定，实测漏条乱序；
+ *  单条+文本格式实测 4/4 全对）；DeepL 引擎保留官方数组批量。返回成功条数。 */
 export async function translateNews(items: TransInput[]): Promise<number> {
   const cfg = getTransCfg()
   if (!cfg.enabled || !cfg.apiKey || items.length === 0) return 0
-  const batchSize = 10
-  let okCount = 0
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize)
-    let ok = 0
-    try {
-      ok = await translateBatch(batch, cfg)
-    } catch {
-      // 单批失败重试 1 次
-      try { ok = await translateBatch(batch, cfg) } catch { /* 该批放弃，保留原文 */ }
+  if (cfg.provider === 'deepl') {
+    let okD = 0
+    for (let i = 0; i < items.length; i += 40) {
+      const batch = items.slice(i, i + 40)
+      try { okD += await deeplBatch(batch, cfg) } catch {
+        try { okD += await deeplBatch(batch, cfg) } catch { /* 放弃该批 */ }
+      }
+      if (okD > 0) transEvents.dispatchEvent(new Event('batch'))
     }
-    okCount += ok
-    if (ok > 0) transEvents.dispatchEvent(new Event('batch'))
+    return okD
   }
-  return okCount
+  // OpenAI 兼容：单条并发 3
+  let ok = 0
+  let idx = 0
+  const worker = async () => {
+    while (idx < items.length) {
+      const it = items[idx++]
+      let done = false
+      for (let attempt = 0; attempt < 2 && !done; attempt++) {
+        try {
+          await translateOne(it, cfg)
+          done = true; ok++
+          transEvents.dispatchEvent(new Event('batch'))
+        } catch { /* 重试或放弃该条，保留原文 */ }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: 3 }, worker))
+  return ok
 }
 
 const TARGET_NAME: Record<TransCfg['target'], string> = {
@@ -116,30 +131,17 @@ const TARGET_NAME: Record<TransCfg['target'], string> = {
   'zh-TW': '繁體中文（台灣用語）',
 }
 
-async function translateBatch(batch: TransInput[], cfg: TransCfg): Promise<number> {
-  return cfg.provider === 'deepl' ? deeplBatch(batch, cfg) : openaiBatch(batch, cfg)
-}
-
-/* ---------- OpenAI 兼容（智谱GLM / 硅基流动 / DeepSeek / 自定义） ---------- */
-async function openaiBatch(batch: TransInput[], cfg: TransCfg): Promise<number> {
-  const lines = batch.map((it, i) =>
-    `[${i}] 标题: ${it.title}${it.summary ? `\n    摘要: ${it.summary.slice(0, 140)}` : ''}`,
-  ).join('\n')
+/** 单条翻译：【标】/【摘】文本格式（比 JSON 结构化输出稳定），实测作品名/人名译名正确 */
+async function translateOne(it: TransInput, cfg: TransCfg): Promise<void> {
   const sys =
-    `你是动漫资讯标题翻译器。把日文动漫新闻的标题和摘要翻译成${TARGET_NAME[cfg.target]}。` +
-    '作品名优先使用中文社区通用译名（如「薬屋のひとりごと」→《药屋少女的呢喃》）。保留书名号与人名汉字。' +
-    '只输出 JSON 数组，不要任何其他文字：[{"i":索引,"title":"中文标题","summary":"中文摘要"}]。无摘要则 summary 为空字符串。'
+    `把日文动漫新闻标题翻译成${TARGET_NAME[cfg.target]}。作品名用中文社区通用译名` +
+    '（例：「薬屋のひとりごと」→《药屋少女的呢喃》）。输出两行：【标】中文标题 和（如有摘要）【摘】中文摘要。' +
+    '没有摘要就只输出【标】行。不要输出其他任何内容。'
+  const user = it.summary ? `${it.title}\n（摘要：${it.summary.slice(0, 140)}）` : it.title
   const r = await httpPostJson(
     `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`,
     { Authorization: `Bearer ${cfg.apiKey}` },
-    {
-      model: cfg.model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: lines },
-      ],
-    },
+    { model: cfg.model, temperature: 0.2, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] },
     30000,
   )
   if (r.status !== 200) throw new Error(`翻译 HTTP ${r.status}`)
@@ -148,18 +150,10 @@ async function openaiBatch(batch: TransInput[], cfg: TransCfg): Promise<number> 
     const j = JSON.parse(r.text) as { choices?: { message?: { content?: string } }[] }
     content = j.choices?.[0]?.message?.content || ''
   } catch { throw new Error('翻译响应解析失败') }
-  const m = content.match(/\[[\s\S]*\]/)
-  if (!m) throw new Error('翻译响应无 JSON')
-  const arr = JSON.parse(m[0]) as { i: number; title: string; summary?: string }[]
-  let ok = 0
-  arr.forEach((o) => {
-    const it = batch[o.i]
-    if (it && o.title) {
-      putTransCache(it.link, o.title.trim(), (o.summary || '').trim())
-      ok++
-    }
-  })
-  return ok
+  const tM = content.match(/【标】\s*(.+)/)
+  if (!tM) throw new Error('翻译响应格式异常')
+  const sM = content.match(/【摘】\s*([\s\S]+)/)
+  putTransCache(it.link, tM[1].trim(), (sM?.[1] || '').trim())
 }
 
 /* ---------- DeepL 免费版（api-free.deepl.com，50万字符/月，仅简体中文目标） ---------- */
