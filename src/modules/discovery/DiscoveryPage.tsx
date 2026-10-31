@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import { useAsync } from '../../hooks/useAsync'
-import { getSource, dedup, type WorkItem, type Kind } from '../../services/sources'
+import { getSource, dedup, type WorkItem, type Kind, searchAll } from '../../services/sources'
 import { GENRE_MAP } from '../../services/sources/anilist'
 
 const SORTS = ['热门', '最新', '评分'] as const
@@ -15,7 +15,11 @@ export default function DiscoveryPage() {
   const [sort, setSort] = useState<(typeof SORTS)[number]>('热门')
 
   const { loading, data, error, retry } = useAsync(
-    () => getSource('anilist').search({ kind: type, genre: genreEn ?? undefined, sort }),
+    async () => {
+      // 有分类 → AniList 精确分类过滤；无分类 → 全源聚合（中文优先）
+      if (genreEn) return getSource('anilist').search({ kind: type, genre: genreEn, sort })
+      return searchAll({ kind: type, sort })
+    },
     [type, genreEn, sort],
   )
 

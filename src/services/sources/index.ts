@@ -2,11 +2,13 @@
 import type { SourceAdapter, WorkItem } from './types'
 import anilist from './anilist'
 import jikan from './jikan'
+import bilibili from './bilibili'
+import mangadex from './mangadex'
 
-/** 聚合结果排序：来源优先级（AniList 数据更全） */
-export const SOURCE_ORDER: Record<string, number> = { anilist: 0, jikan: 1 }
+/** 聚合结果排序：中文优先（bilibili 中文动漫 → mangadex 中文别名漫画 → AniList → Jikan） */
+export const SOURCE_ORDER: Record<string, number> = { bilibili: 0, mangadex: 1, anilist: 2, jikan: 3 }
 
-export const SOURCES: SourceAdapter[] = [anilist, jikan]
+export const SOURCES: SourceAdapter[] = [bilibili, mangadex, anilist, jikan]
 
 export const SOURCE_NAMES: Record<string, string> = Object.fromEntries(SOURCES.map((s) => [s.id, s.name]))
 

@@ -4,7 +4,7 @@ import { Section, EmptyState, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import NewsSection from '../news/NewsSection'
 import { useAsync } from '../../hooks/useAsync'
-import { getSource, dedup, type WorkItem } from '../../services/sources'
+import { searchAll, type WorkItem } from '../../services/sources'
 
 const quicks: { icon: IconName; label: string; to?: string; wip?: boolean }[] = [
   { icon: 'search', label: '搜索', to: '/search' },
@@ -19,12 +19,12 @@ export default function HomePage() {
   const open = (w: WorkItem) => nav(`/detail/${w.sourceId}/${w.kind}/${w.workId}`)
 
   const { loading, data, error, retry } = useAsync(async () => {
-    const src = getSource('anilist')
+    // 聚合浏览：bilibili(中文动漫) + mangadex(漫画) + anilist 多来源合并，中文排前
     const [trending, popManga] = await Promise.all([
-      src.search({ kind: 'anime', sort: 'trending' }),
-      src.search({ kind: 'manga', sort: '热门' }),
+      searchAll({ kind: 'anime', sort: 'trending' }),
+      searchAll({ kind: 'manga', sort: '热门' }),
     ])
-    return { anime: dedup(trending.items).slice(0, 10), manga: dedup(popManga.items).slice(0, 10) }
+    return { anime: trending.items.slice(0, 12), manga: popManga.items.slice(0, 12) }
   }, [])
 
   return (

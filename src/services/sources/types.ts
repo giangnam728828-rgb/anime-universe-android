@@ -15,6 +15,9 @@ export interface WorkItem {
   genres: string[]
   statusCn?: string
   formatCn?: string
+  /** 标题/简介语言标注（来源无中文字段时提示用户，如 'ja'/'en'/'zh-hans'） */
+  titleLang?: string
+  descLang?: string
   episodes?: number
   chapters?: number
   favorites?: number

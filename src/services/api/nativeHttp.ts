@@ -9,12 +9,12 @@ export interface HttpResult { status: number; text: string; ms: number }
 
 const UA = 'Mozilla/5.0 (Linux; Android 14) AnimeUniverse/0.5 (RSS reader)'
 
-export async function httpGetText(url: string, timeoutMs = 12000): Promise<HttpResult> {
+export async function httpGetText(url: string, timeoutMs = 12000, extraHeaders?: Record<string, string>): Promise<HttpResult> {
   const t0 = Date.now()
   if (Capacitor.isNativePlatform()) {
     const r = await CapacitorHttp.get({
       url,
-      headers: { 'User-Agent': UA },
+      headers: { 'User-Agent': UA, ...(extraHeaders || {}) },
       responseType: 'text',
       connectTimeout: timeoutMs,
       readTimeout: timeoutMs,
@@ -26,7 +26,7 @@ export async function httpGetText(url: string, timeoutMs = 12000): Promise<HttpR
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const r = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/rss+xml, application/xml, text/xml, text/html, */*' } })
+    const r = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/rss+xml, application/xml, text/xml, text/html, */*', ...(extraHeaders || {}) } })
     const text = await r.text()
     return { status: r.status, text, ms: Date.now() - t0 }
   } finally {
