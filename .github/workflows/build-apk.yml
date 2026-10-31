@@ -20,6 +20,17 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Inject embedded translation key
+        env:
+          TRANS_API_KEY: ${{ secrets.TRANS_API_KEY }}
+        run: |
+          if [ -n "$TRANS_API_KEY" ]; then
+            printf '// Auto-injected at build time from GitHub Secrets.\nexport const EMBEDDED_TRANS_KEY = '%s'\n' "$TRANS_API_KEY" > src/services/translate/embedded.ts
+            echo "translation key injected"
+          else
+            echo "no TRANS_API_KEY secret, keep placeholder"
+          fi
+
       - name: Build web assets
         run: npm run build
 

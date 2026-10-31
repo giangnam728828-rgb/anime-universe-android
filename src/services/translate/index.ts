@@ -9,6 +9,7 @@
  *  原则：密钥仅存本机；默认关闭；结果按 URL 缓存（LRU 300）不重复计费；失败回退原文不阻塞。
  */
 import { httpPostJson } from '../api/nativeHttp'
+import { EMBEDDED_TRANS_KEY } from './embedded'
 
 export type TransProvider = 'openai' | 'deepl'
 
@@ -25,12 +26,24 @@ const CKEY = 'au_translate_cfg'
 const CACHE_KEY = 'au_trans_cache'
 const CACHE_MAX = 300
 
+/** 默认配置：构建时嵌入了 key 则开箱即用（用户在设置页改过则以用户为准） */
+function defaultCfg(): TransCfg {
+  return {
+    enabled: !!EMBEDDED_TRANS_KEY,
+    provider: 'openai',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    apiKey: EMBEDDED_TRANS_KEY,
+    model: 'glm-4-flash',
+    target: 'zh-CN',
+  }
+}
+
 export function getTransCfg(): TransCfg {
   try {
     const c = JSON.parse(localStorage.getItem(CKEY) || 'null')
-    if (c) return { enabled: false, provider: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKey: '', model: 'glm-4-flash', target: 'zh-CN', ...c }
+    if (c) return { ...defaultCfg(), ...c }
   } catch { /* ignore */ }
-  return { enabled: false, provider: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKey: '', model: 'glm-4-flash', target: 'zh-CN' }
+  return defaultCfg()
 }
 
 export function setTransCfg(patch: Partial<TransCfg>) {
