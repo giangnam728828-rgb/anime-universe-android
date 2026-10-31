@@ -1,5 +1,5 @@
 import Icon from './Icon'
-import type { WorkItem } from '../services/sources'
+import { SOURCE_NAMES, type WorkItem } from '../services/sources'
 
 export default function WorkCard({ w, onClick }: { w: WorkItem; onClick: () => void }) {
   return (
@@ -11,7 +11,7 @@ export default function WorkCard({ w, onClick }: { w: WorkItem; onClick: () => v
       <div className="wc-meta">
         {w.score != null && <span className="wc-score">★ {w.score}</span>}
         {w.year && <span>{w.year}</span>}
-        <span className="wc-src">AniList</span>
+        <span className="wc-src">{SOURCE_NAMES[w.sourceId] || w.sourceId}</span>
       </div>
     </button>
   )

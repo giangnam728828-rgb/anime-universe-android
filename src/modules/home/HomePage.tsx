@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import Icon, { type IconName } from '../../components/Icon'
 import { Section, EmptyState, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
+import NewsSection from '../news/NewsSection'
 import { useAsync } from '../../hooks/useAsync'
 import { getSource, dedup, type WorkItem } from '../../services/sources'
 
@@ -77,8 +78,10 @@ export default function HomePage() {
         </>
       ) : null}
 
-      <Section title="最新资讯" extra="阶段 5 接入">
-        <EmptyState icon="news" title="数据源待接入" desc="资讯将通过公开 RSS 接入（阶段 5）。" />
+      <Section title="最新资讯" extra={
+        <button onClick={() => nav('/news')} style={{ color: 'var(--accent)', fontSize: 11.5 }}>更多 ›</button>
+      }>
+        <NewsSection />
       </Section>
     </>
   )

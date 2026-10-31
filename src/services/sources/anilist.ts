@@ -12,17 +12,17 @@ export const GENRE_MAP: Record<string, string> = {
   Music: '音乐', Mecha: '机甲',
 }
 
-const STATUS_MAP: Record<string, string> = {
+export const STATUS_MAP: Record<string, string> = {
   FINISHED: '已完结', RELEASING: '放送/连载中', NOT_YET_RELEASED: '未开播',
   CANCELLED: '已取消', HIATUS: '休载/停更',
 }
 
-const FORMAT_MAP: Record<string, string> = {
+export const FORMAT_MAP: Record<string, string> = {
   TV: 'TV 动画', TV_SHORT: 'TV 短篇', MOVIE: '剧场版', OVA: 'OVA', ONA: 'ONA',
   SPECIAL: '特别篇', MANGA: '漫画', NOVEL: '轻小说', ONE_SHOT: '短篇',
 }
 
-function stripHtml(s?: string | null): string | undefined {
+export function stripHtml(s?: string | null): string | undefined {
   if (!s) return undefined
   return s.replace(/<[^>]*>/g, '').replace(/&(#?\w+);/g, ' ').replace(/\s+/g, ' ').trim() || undefined
 }

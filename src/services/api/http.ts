@@ -55,3 +55,35 @@ export async function cachedPost(url: string, body: unknown, opts: { timeout?: n
     release()
   }
 }
+
+export async function cachedGet(url: string, opts: { timeout?: number; retries?: number } = {}): Promise<string> {
+  const hit = cache.get('G:' + url)
+  if (hit && Date.now() - hit.t < TTL) return hit.v as string
+
+  const { timeout = 12000, retries = 1 } = opts
+  await acquire()
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), timeout)
+      try {
+        const r = await fetch(url, { signal: ctrl.signal })
+        clearTimeout(timer)
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        const text = await r.text()
+        cache.set('G:' + url, { t: Date.now(), v: text })
+        if (cache.size > 100) {
+          const first = cache.keys().next().value
+          if (first) cache.delete(first)
+        }
+        return text
+      } catch (e) {
+        clearTimeout(timer)
+        if (attempt >= retries) throw e instanceof Error ? e : new Error(String(e))
+        await new Promise((r2) => setTimeout(r2, 600))
+      }
+    }
+  } finally {
+    release()
+  }
+}

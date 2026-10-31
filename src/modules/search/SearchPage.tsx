@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import { getSearchHistory, addSearchHistory, dbClear, type SearchHistoryItem } from '../../database/db'
-import { getSource, dedup, type WorkItem } from '../../services/sources'
+import { searchAll, type WorkItem } from '../../services/sources'
 
 type Scope = 'anime' | 'manga'
 const SCOPES: { id: Scope; label: string }[] = [
@@ -20,6 +20,7 @@ export default function SearchPage() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
+  const [failed, setFailed] = useState<string[]>([])
   const [searched, setSearched] = useState('')
   const [history, setHistory] = useState<SearchHistoryItem[]>([])
 
@@ -33,12 +34,12 @@ export default function SearchPage() {
     setError(undefined)
     try {
       if (!append) setResults([])
-      const r = await getSource('anilist').search({ kw: key, kind, page: p })
-      const items = dedup(r.items)
-      setResults((prev) => (append ? dedup([...prev, ...items]) : items))
-      setHasNext(r.hasNext)
+      const r = await searchAll({ kw: key, kind, page: p })
+      setResults((prev) => (append ? [...prev, ...r.items] : r.items))
+      setHasNext(r.items.length >= 18)
       setPage(p)
       setSearched(key)
+      setFailed(r.failed)
       if (!append && p === 1) { await addSearchHistory(key); load() }
     } catch (e) {
       setError((e as Error)?.message || String(e))
@@ -93,6 +94,9 @@ export default function SearchPage() {
       {results.length > 0 && (
         <Section title={searched ? `「${searched}」的搜索结果` : '结果'}
           extra={`共 ${results.length} 条 · AniList`}>
+          {failed.length > 0 && (
+            <div className="news-warn">部分来源不可用：{failed.join('、')}（其余正常）</div>
+          )}
           <div className="work-grid">
             {results.map((w) => (
               <WorkCard key={w.sourceId + w.workId} w={w}
