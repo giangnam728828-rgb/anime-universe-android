@@ -1,7 +1,18 @@
-/** 资讯服务：官方公开 RSS 直连（CapacitorHttp 原生请求，无第三方代理）
- *  文字/图片完全分离；来源状态持久化 + 失败冷却（10min 内跳过，不阻塞其他源）
+/** 资讯服务：官方公开 RSS/API 直连（CapacitorHttp 原生请求，无第三方代理）
+ *  中文来源优先；英文源为独立备用分类
+ *  来源状态持久化 + 失败冷却（10min 内跳过，不阻塞其他源）
+ *
+ *  来源调查（2026-10-31 手机网络实测）：
+ *  - 机核 GCORES  官方RSS https://www.gcores.com/rss         简中 200OK 20条 117图 无防盗链
+ *  - CnGal        官方API https://api.cngal.org (swagger已验证) 简中 200OK 18条 带图(302跟随)
+ *  - 巴哈姆特 GNN  官方RSS https://gnn.gamer.com.tw          繁中 当前网络不可达，保留+冷却
+ *  - MyAnimeList  官方RSS https://myanimelist.net/rss/news.xml 英文 200OK（英文备用）
+ *  - Anime Corner 官方RSS https://animecorner.me/feed/       英文 200OK（英文备用）
+ *  - 已验证并拒绝：ACG17(RSS空壳0条) / IT之家(动漫占比低噪音大) / Animen(不可达) / 动漫之家(接口全失效) / RSSHub公共实例(不可达)
  */
 import { httpGetText } from '../api/nativeHttp'
+
+export type NewsCategory = '综合' | '动漫' | '漫画' | '游戏' | '二次元' | '英文'
 
 export interface NewsItem {
   id: string
@@ -9,12 +20,11 @@ export interface NewsItem {
   link: string
   source: string
   lang: 'zh' | 'en'
+  category: NewsCategory
   date?: string
   summary?: string
   image?: string
 }
-
-export type NewsCategory = '综合' | '动漫' | '漫画' | '游戏' | '二次元'
 
 export interface FeedMeta {
   id: string
@@ -22,16 +32,30 @@ export interface FeedMeta {
   url: string
   lang: 'zh' | 'en'
   category: NewsCategory
-  /** 备注（如"当前网络不可达，保留待恢复"） */
+  kind: 'rss' | 'cngal'
+  /** 来源主页（CnGal 等无独立原文页时跳主站） */
+  home?: string
   note?: string
 }
 
-/** 来源注册：GNN 保留（当前网络不可达，靠冷却机制不阻塞其他源） */
+/** 来源注册（全部为官方公开 RSS/API，保留来源标记与原文链接，不转载全文） */
 export const FEEDS: FeedMeta[] = [
-  { id: 'gnn', name: '巴哈姆特GNN', url: 'https://gnn.gamer.com.tw/rss_utf8.xml', lang: 'zh', category: '综合', note: '当前网络环境不可达，保留备用' },
-  { id: 'mal', name: 'MyAnimeList', url: 'https://myanimelist.net/rss/news.xml', lang: 'en', category: '动漫' },
-  { id: 'ac', name: 'Anime Corner', url: 'https://animecorner.me/feed/', lang: 'en', category: '综合' },
+  { id: 'gcores', name: '机核 GCORES', url: 'https://www.gcores.com/rss', lang: 'zh', category: '综合', kind: 'rss' },
+  { id: 'cngal', name: 'CnGal资料站', url: 'https://api.cngal.org/api/home/GetHomeNewsView', lang: 'zh', category: '游戏', kind: 'cngal', home: 'https://www.cngal.org' },
+  { id: 'gnn', name: '巴哈姆特GNN', url: 'https://gnn.gamer.com.tw/rss_utf8.xml', lang: 'zh', category: '综合', kind: 'rss', note: '当前网络不可达，保留备用' },
+  { id: 'mal', name: 'MyAnimeList', url: 'https://myanimelist.net/rss/news.xml', lang: 'en', category: '英文', kind: 'rss' },
+  { id: 'ac', name: 'Anime Corner', url: 'https://animecorner.me/feed/', lang: 'en', category: '英文', kind: 'rss' },
 ]
+
+/** 分类自动识别（关键词 → 分类；无法判断归「综合」） */
+export function classify(text: string): NewsCategory {
+  const t = text.toLowerCase()
+  if (/漫画|manga|comic/.test(t)) return '漫画'
+  if (/动漫|动画|anime|动画|番剧|新番|剧场版|放送/.test(t)) return '动漫'
+  if (/游戏|新作|发售|steam|主机|switch|playstation|galgame|视觉小说|独立游戏|rpg/.test(t)) return '游戏'
+  if (/声优|周边|cos|漫展|手办|谷子|同人|展台|二次元/.test(t)) return '二次元'
+  return '综合'
+}
 
 /* ---------- 来源状态（持久化 + 冷却） ---------- */
 export interface SourceStatus {
@@ -56,7 +80,6 @@ function saveStatus(s: Record<string, SourceStatus>) {
 
 export function getSourceStatuses(): Record<string, SourceStatus> {
   const st = loadStatus()
-  // 补默认
   FEEDS.forEach((f) => { if (!st[f.id]) st[f.id] = { enabled: true } })
   return st
 }
@@ -81,7 +104,7 @@ export async function testSource(id: string): Promise<SourceStatus> {
   const t0 = Date.now()
   try {
     const r = await httpGetText(feed.url, 12000)
-    const items = parseFeed(r.text, feed)
+    const items = await parseSource(feed, r.text)
     const ok = r.status === 200 && items.length > 0
     const st: SourceStatus = {
       enabled: getSourceStatuses()[id]?.enabled ?? true,
@@ -96,7 +119,7 @@ export async function testSource(id: string): Promise<SourceStatus> {
     const st: SourceStatus = {
       enabled: getSourceStatuses()[id]?.enabled ?? true,
       lastTestAt: Date.now(), lastStatus: 0, lastMs: Date.now() - t0,
-      ok: false, lastError: msg.includes('abort') || msg.includes('timeout') ? '连接超时（当前网络不可达）' : msg,
+      ok: false, lastError: /abort|timeout/i.test(msg) ? '连接超时（当前网络不可达）' : msg,
       cooldownUntil: Date.now() + COOLDOWN_MS,
     }
     updateStatus(id, st)
@@ -104,14 +127,19 @@ export async function testSource(id: string): Promise<SourceStatus> {
   }
 }
 
-/* ---------- RSS 解析 ---------- */
+/* ---------- 解析 ---------- */
 
 function firstImg(html: string): string | undefined {
   const m = html.match(/<img[^>]+src=["']([^"']+)["']/i)
   return m?.[1]
 }
 
-function parseFeed(xml: string, feed: FeedMeta): NewsItem[] {
+function stripHtml2(raw: string): string {
+  const decoded = raw.includes('&lt;') ? raw.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : raw
+  return decoded.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function parseRss(xml: string, feed: FeedMeta): NewsItem[] {
   const doc = new DOMParser().parseFromString(xml, 'text/xml')
   if (doc.querySelector('parsererror')) return []
   const nodes = Array.from(doc.querySelectorAll('item, entry')).slice(0, 15)
@@ -129,15 +157,45 @@ function parseFeed(xml: string, feed: FeedMeta): NewsItem[] {
       n.querySelector('summary')?.textContent ||
       n.querySelector('content')?.textContent ||
       ''
-    const decoded = rawDesc.includes('&lt;') ? rawDesc.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : rawDesc
-    const summary = decoded.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90)
+    const summary = stripHtml2(rawDesc).slice(0, 90)
     const image =
       n.querySelector('enclosure')?.getAttribute('url') ||
       n.querySelector('media\\:thumbnail, thumbnail')?.getAttribute('url') ||
-      firstImg(decoded)
-    out.push({ id: `${feed.id}-${i}-${link.slice(-40)}`, title, link, source: feed.name, lang: feed.lang, date, summary, image })
+      firstImg(rawDesc)
+    const full = title + ' ' + summary
+    out.push({
+      id: `${feed.id}-${i}-${link.slice(-40)}`, title, link, source: feed.name,
+      lang: feed.lang, category: feed.lang === 'en' ? '英文' : classify(full),
+      date, summary, image,
+    })
   })
   return out
+}
+
+interface CngalEntry { articleId: number; title?: string; text?: string; type?: string; image?: string; groupId?: number }
+
+function parseCngal(text: string, feed: FeedMeta): NewsItem[] {
+  const arr = JSON.parse(text) as CngalEntry[]
+  if (!Array.isArray(arr)) return []
+  return arr.slice(0, 15).map((e) => {
+    const title = (e.title || e.text || 'CnGal 动态').trim().slice(0, 80)
+    const link = `https://www.cngal.org/news/index/${e.articleId}`
+    return {
+      id: `cngal-${e.articleId}`,
+      title,
+      link,
+      source: feed.name,
+      lang: 'zh' as const,
+      category: classify(title + ' ' + (e.text || '')) || '游戏',
+      summary: (e.text || '').replace(/\s+/g, ' ').trim().slice(0, 90),
+      image: e.image || undefined,
+    }
+  }).filter((n) => n.title)
+}
+
+async function parseSource(feed: FeedMeta, text: string): Promise<NewsItem[]> {
+  if (feed.kind === 'cngal') return parseCngal(text, feed)
+  return parseRss(text, feed)
 }
 
 /* ---------- 聚合拉取 ---------- */
@@ -147,7 +205,6 @@ let lastResult: NewsResult | null = null
 export interface NewsResult { items: NewsItem[]; failed: { name: string; reason: string }[] }
 
 export async function fetchNews(force = false): Promise<NewsResult> {
-  // 3 分钟结果缓存，防重复拉取
   if (!force && lastResult && Date.now() - lastFetchAt < 3 * 60 * 1000) return lastResult
 
   const statuses = getSourceStatuses()
@@ -162,7 +219,7 @@ export async function fetchNews(force = false): Promise<NewsResult> {
       const t0 = Date.now()
       try {
         const r = await httpGetText(f.url, 12000)
-        const items = parseFeed(r.text, f)
+        const items = await parseSource(f, r.text)
         const ok = r.status === 200 && items.length > 0
         updateStatus(f.id, {
           lastTestAt: Date.now(), lastStatus: r.status, lastMs: Date.now() - t0, ok,
@@ -194,7 +251,6 @@ export async function fetchNews(force = false): Promise<NewsResult> {
     }
   })
 
-  // 被冷却跳过的源也纳入 failed 提示（仅启用但冷却中的）
   FEEDS.forEach((f) => {
     const s = statuses[f.id]
     if (s?.enabled !== false && s?.cooldownUntil && s.cooldownUntil >= now && !active.includes(f)) {
@@ -202,7 +258,6 @@ export async function fetchNews(force = false): Promise<NewsResult> {
     }
   })
 
-  // 中文源优先，组内按时间新→旧
   const byTime = (a: NewsItem, b: NewsItem) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
   const zh = items.filter((i) => i.lang === 'zh').sort(byTime)
   const en = items.filter((i) => i.lang === 'en').sort(byTime)

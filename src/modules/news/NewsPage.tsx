@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import { EmptyState, Loading } from '../../components/ui'
@@ -5,21 +6,34 @@ import NewsImage from '../../components/NewsImage'
 import { useAsync } from '../../hooks/useAsync'
 import { fetchNews, type NewsItem } from '../../services/news'
 
+const CATS = ['全部', '动漫', '漫画', '游戏', '二次元', '英文资讯'] as const
+type Cat = (typeof CATS)[number]
+
 export default function NewsPage() {
   const nav = useNavigate()
+  const [cat, setCat] = useState<Cat>('全部')
   const { loading, data, error, retry } = useAsync(() => fetchNews(), [])
 
-  const zh = (data?.items || []).filter((n) => n.lang === 'zh')
-  const en = (data?.items || []).filter((n) => n.lang === 'en')
+  const all = data?.items || []
+  const zh = all.filter((n) => n.lang === 'zh' && (cat === '全部' || n.category === cat))
+  const en = cat === '全部' || cat === '英文资讯'
+    ? all.filter((n) => n.lang === 'en')
+    : []
 
   return (
     <div className="page">
       <header className="page-head">
         <h1>资讯</h1>
-        <p>公开 RSS 聚合 · 原生直连 · 点击站内阅读
+        <p>中文优先 · 官方公开来源 · 点击站内阅读
           <button onClick={() => nav('/news-sources')} style={{ color: 'var(--accent)', marginLeft: 8, fontSize: 11.5 }}>来源管理 ›</button>
         </p>
       </header>
+
+      <div className="chips" style={{ marginBottom: 14 }}>
+        {CATS.map((c) => (
+          <button key={c} className={'chip' + (cat === c ? ' on' : '')} onClick={() => setCat(c)}>{c}</button>
+        ))}
+      </div>
 
       {loading ? <Loading text="正在请求来源…" /> : error || !data ? (
         <EmptyState icon="info" title="资讯加载失败" desc={error || '未知错误'}
@@ -38,16 +52,20 @@ export default function NewsPage() {
 
           {zh.length > 0 && (
             <>
-              <div className="news-group">中文来源</div>
+              <div className="news-group">中文来源{cat !== '全部' ? ` · ${cat}` : ''}</div>
               <div className="news-list">{zh.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}</div>
             </>
           )}
-          {zh.length === 0 && (
-            <div className="news-warn">中文来源当前网络不可达（如巴哈姆特GNN），已保留并在来源管理中显示原因。</div>
+          {zh.length === 0 && cat !== '英文资讯' && (
+            <div className="news-warn">
+              {all.some((n) => n.lang === 'zh')
+                ? `暂无「${cat}」分类的中文内容（其他分类可能有）`
+                : '中文来源当前不可用（如巴哈姆特GNN网络不可达），已保留并在来源管理中显示原因。'}
+            </div>
           )}
           {en.length > 0 && (
             <>
-              <div className="news-group">英文备用来源</div>
+              <div className="news-group">英文备用来源（不与中文内容混排）</div>
               <div className="news-list">{en.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}</div>
             </>
           )}

@@ -16,7 +16,7 @@ export default function NewsSection() {
     if (!idle) return undefined as never
     return fetchNews()
   }, [idle])
-  const items = (data?.items || []).slice(0, 10)
+  const items = (data?.items || []).filter((n) => n.lang === 'zh').slice(0, 10) // 首页只出中文，英文不占位
   if (!idle) return null
 
   if (loading) return <div className="loading" style={{ padding: '18px 0' }}><span className="spinner" /></div>
