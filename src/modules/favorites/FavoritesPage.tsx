@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Icon from '../../components/Icon'
-import { EmptyState, Section, Row } from '../../components/ui'
+import { EmptyState, Section } from '../../components/ui'
 import { dbGetAll, dbDelete, dbClear, type FavoriteItem, type ReadingHistoryItem } from '../../database/db'
 
 type Tab = 'fav' | 'history'
