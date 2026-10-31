@@ -10,6 +10,11 @@ export const favKeyOf = (sourceId: string, kind: string, workId: string) => `${s
 
 export default function DetailPage() {
   const nav = useNavigate()
+  // 有历史则回上一级；无历史(如直接落到详情页)兜底回首页
+  const goBack = () => {
+    if (window.history.length > 1) nav(-1)
+    else nav('/')
+  }
   const { sourceId = '', kind = 'anime', workId = '' } = useParams()
   const { loading, data, error, retry } = useAsync<WorkDetail>(
     () => getSource(sourceId).getDetail(kind as Kind, workId),
@@ -46,7 +51,7 @@ export default function DetailPage() {
 
   return (
     <div style={{ paddingBottom: 90 }}>
-      <button onClick={() => nav(-1)} style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--muted)', fontSize: 13, marginBottom: 12 }}>
+      <button onClick={goBack} style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--muted)', fontSize: 13, marginBottom: 12 }}>
         <span style={{ display: 'flex', transform: 'rotate(180deg)' }}><Icon name="chevron" size={15} /></span>
         返回
       </button>
