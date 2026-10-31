@@ -30,20 +30,36 @@ jobs:
           fi
           npx cap sync android
 
+      - name: Setup fixed signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore.p12
+          cat > android/keystore.properties <<EOF
+          storeFile=release.keystore.p12
+          storePassword=$KEYSTORE_PASSWORD
+          storeType=PKCS12
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEYSTORE_PASSWORD
+          EOF
+          python3 scripts/patch_signing.py "${{ github.run_number }}"
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build Debug APK
+      - name: Build Release APK (fixed signature)
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: anime-universe-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: anime-universe-apk
+          path: android/app/build/outputs/apk/release/app-release.apk

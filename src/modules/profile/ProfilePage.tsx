@@ -52,8 +52,8 @@ export default function ProfilePage() {
 
       <Modal open={about} onClose={() => setAbout(false)} title="关于动漫宇宙">
         <b>动漫宇宙 Anime Universe</b><br />
-        版本：0.1.0（debug）<br />
-        阶段：0 初始化 ✅ / 1 基础 UI ✅<br /><br />
+        版本：0.3.x（run 号递增）<br />
+        阶段：0 初始化 ✅ / 1 基础 UI ✅ / 2 本地数据 ✅<br /><br />
         集动漫、漫画、资讯、资源搜索、AI 助手与实用工具于一体的综合内容平台。<br />
         本地优先架构，个人数据仅保存在本机。<br /><br />
         技术栈：React 18 · TypeScript · Vite · Capacitor 6

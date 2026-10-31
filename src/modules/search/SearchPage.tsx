@@ -1,30 +1,28 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Chip, EmptyState, Section } from '../../components/ui'
+import { getSearchHistory, addSearchHistory, dbClear, type SearchHistoryItem } from '../../database/db'
 
 type Scope = '动漫' | '漫画' | '资讯'
 const ALL_SCOPES: Scope[] = ['动漫', '漫画', '资讯']
-const HKEY = 'au_search_history'
-
-function loadHistory(): string[] {
-  try { return JSON.parse(localStorage.getItem(HKEY) || '[]') } catch { return [] }
-}
 
 export default function SearchPage() {
   const [q, setQ] = useState('')
   const [scopes, setScopes] = useState<Scope[]>(['动漫', '漫画'])
   const [done, setDone] = useState<{ q: string; scopes: Scope[] } | null>(null)
-  const [history, setHistory] = useState<string[]>(loadHistory)
+  const [history, setHistory] = useState<SearchHistoryItem[]>([])
+
+  const load = useCallback(() => { getSearchHistory().then(setHistory) }, [])
+  useEffect(() => { load() }, [load])
 
   const toggleScope = (s: Scope) =>
     setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))
 
-  const doSearch = (text?: string) => {
+  const doSearch = async (text?: string) => {
     const kw = (text ?? q).trim()
     if (!kw) return
     setQ(kw)
-    const next = [kw, ...history.filter((h) => h !== kw)].slice(0, 8)
-    setHistory(next)
-    localStorage.setItem(HKEY, JSON.stringify(next))
+    await addSearchHistory(kw)
+    load()
     setDone({ q: kw, scopes })
   }
 
@@ -46,8 +44,11 @@ export default function SearchPage() {
       </Section>
 
       {history.length > 0 && (
-        <Section title="搜索历史" extra={<button onClick={() => { setHistory([]); localStorage.removeItem(HKEY); setDone(null) }} style={{ color: 'var(--muted)', fontSize: 11.5 }}>清空</button>}>
-          <div className="chips">{history.map((h) => <Chip key={h} onClick={() => doSearch(h)}>{h}</Chip>)}</div>
+        <Section title="搜索历史" extra={
+          <button onClick={() => { dbClear('search_history'); setHistory([]); setDone(null) }}
+            style={{ color: 'var(--muted)', fontSize: 11.5 }}>清空</button>
+        }>
+          <div className="chips">{history.map((h) => <Chip key={h.kw} onClick={() => doSearch(h.kw)}>{h.kw}</Chip>)}</div>
         </Section>
       )}
 
