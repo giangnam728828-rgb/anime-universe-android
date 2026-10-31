@@ -8,14 +8,23 @@ import { fetchNews, type NewsItem } from '../../services/news'
 
 const CATS = ['全部', '动漫', '漫画', '游戏', '二次元', '英文资讯'] as const
 type Cat = (typeof CATS)[number]
+const PAGE = 20
 
 export default function NewsPage() {
   const nav = useNavigate()
   const [cat, setCat] = useState<Cat>('全部')
+  const [shown, setShown] = useState(PAGE)
   const { loading, data, error, retry } = useAsync(() => fetchNews(), [])
 
   const all = data?.items || []
-  const zh = all.filter((n) => n.lang === 'zh' && (cat === '全部' || n.category === cat))
+  // 分类数量统计（chips 徽标）
+  const countOf = (c: Cat) => {
+    if (c === '全部') return all.filter((n) => n.lang === 'zh').length
+    if (c === '英文资讯') return all.filter((n) => n.lang === 'en').length
+    return all.filter((n) => n.lang === 'zh' && n.category === c).length
+  }
+  const zh = all.filter((n) => n.lang === 'zh' && (cat === '全部' || n.category === cat)).slice(0, shown)
+  const zhTotal = all.filter((n) => n.lang === 'zh' && (cat === '全部' || n.category === cat)).length
   const en = cat === '全部' || cat === '英文资讯'
     ? all.filter((n) => n.lang === 'en')
     : []
@@ -31,7 +40,9 @@ export default function NewsPage() {
 
       <div className="chips" style={{ marginBottom: 14 }}>
         {CATS.map((c) => (
-          <button key={c} className={'chip' + (cat === c ? ' on' : '')} onClick={() => setCat(c)}>{c}</button>
+          <button key={c} className={'chip' + (cat === c ? ' on' : '')} onClick={() => { setCat(c); setShown(PAGE) }}>
+            {c}·{countOf(c)}
+          </button>
         ))}
       </div>
 
@@ -49,11 +60,22 @@ export default function NewsPage() {
               {data.failed.map((f) => `${f.name}：${f.reason}`).join('；')}
             </div>
           )}
+          {data.fromCache.length > 0 && (
+            <div className="news-warn">以下来源本次请求失败，展示的是 6 小时内缓存：{data.fromCache.join('、')}</div>
+          )}
 
           {zh.length > 0 && (
             <>
               <div className="news-group">中文来源{cat !== '全部' ? ` · ${cat}` : ''}</div>
               <div className="news-list">{zh.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}</div>
+              {zhTotal > shown && (
+                <button className="load-more" onClick={() => setShown((n) => n + PAGE)}>
+                  加载更多（已显示 {zh.length} / {zhTotal}）
+                </button>
+              )}
+              {zhTotal <= shown && zhTotal > PAGE && (
+                <div className="news-foot">已加载全部 {zhTotal} 条（来源缓存 3 分钟，下拉更新见来源管理）</div>
+              )}
             </>
           )}
           {zh.length === 0 && cat !== '英文资讯' && (
