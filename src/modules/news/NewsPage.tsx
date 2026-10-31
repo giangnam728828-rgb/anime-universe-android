@@ -2,9 +2,11 @@ import Icon from '../../components/Icon'
 import { EmptyState, Loading } from '../../components/ui'
 import { useAsync } from '../../hooks/useAsync'
 import { fetchNews, type NewsItem } from '../../services/news'
-import { openExternal } from '../../utils/openUrl'
+import { useNavigate } from 'react-router-dom'
+import { imgFallback } from '../../utils/proxy'
 
 export default function NewsPage() {
+  const nav = useNavigate()
   const { loading, data, error, retry } = useAsync(() => fetchNews(), [])
 
   return (
@@ -26,7 +28,7 @@ export default function NewsPage() {
             <div className="news-warn">部分来源暂时不可用：{data.failed.join('、')}（其余正常）</div>
           )}
           <div className="news-list">
-            {data.items.map((n) => <NewsRow key={n.id} n={n} />)}
+            {data.items.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}
           </div>
           <div className="news-foot">内容来自公开 RSS，版权属原作者 · 阶段 5</div>
         </>
@@ -35,12 +37,12 @@ export default function NewsPage() {
   )
 }
 
-export function NewsRow({ n }: { n: NewsItem }) {
+export function NewsRow({ n, nav }: { n: NewsItem; nav: (to: string) => void }) {
   return (
-    <button className="news-row" onClick={() => openExternal(n.link)}>
+    <button className="news-row" onClick={() => nav(`/newsview/${encodeURIComponent(n.link)}`)}>
       {n.image && (
         <div className="news-thumb">
-          <img src={n.image} loading="lazy" alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+          <img src={n.image} referrerPolicy="no-referrer" loading="lazy" alt="" onError={imgFallback} />
         </div>
       )}
       <div className="news-main">

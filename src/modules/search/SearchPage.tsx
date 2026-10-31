@@ -3,49 +3,81 @@ import { useNavigate } from 'react-router-dom'
 import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import { getSearchHistory, addSearchHistory, dbClear, type SearchHistoryItem } from '../../database/db'
-import { searchAll, type WorkItem } from '../../services/sources'
+import { SOURCES, dedup, type WorkItem, type Kind } from '../../services/sources'
+import { fetchNews, type NewsItem } from '../../services/news'
+import { NewsRow } from '../news/NewsPage'
 
-type Scope = 'anime' | 'manga'
+type Scope = 'all' | 'anime' | 'manga' | 'news'
 const SCOPES: { id: Scope; label: string }[] = [
+  { id: 'all', label: '全部' },
   { id: 'anime', label: '动漫' },
   { id: 'manga', label: '漫画' },
+  { id: 'news', label: '资讯' },
 ]
 
 export default function SearchPage() {
   const nav = useNavigate()
   const [q, setQ] = useState('')
-  const [scope, setScope] = useState<Scope>('anime')
+  const [scope, setScope] = useState<Scope>('all')
   const [results, setResults] = useState<WorkItem[]>([])
-  const [hasNext, setHasNext] = useState(false)
-  const [page, setPage] = useState(1)
+  const [newsResults, setNewsResults] = useState<NewsItem[]>([])
+  const [sourcesDone, setSourcesDone] = useState(0) // 已返回的源数（流式渲染）
+  const [sourcesTotal, setSourcesTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
-  const [failed, setFailed] = useState<string[]>([])
   const [searched, setSearched] = useState('')
   const [history, setHistory] = useState<SearchHistoryItem[]>([])
 
   const load = useCallback(() => { getSearchHistory().then(setHistory) }, [])
   useEffect(() => { load() }, [load])
 
-  const run = async (kw: string, kind: Scope, p: number, append: boolean) => {
+  /** 流式渲染：每个源独立返回先到先显示，组内跨源去重 */
+  const run = async (kw: string, sc: Scope) => {
     const key = kw.trim()
     if (!key) return
     setLoading(true)
     setError(undefined)
-    try {
-      if (!append) setResults([])
-      const r = await searchAll({ kw: key, kind, page: p })
-      setResults((prev) => (append ? [...prev, ...r.items] : r.items))
-      setHasNext(r.items.length >= 18)
-      setPage(p)
-      setSearched(key)
-      setFailed(r.failed)
-      if (!append && p === 1) { await addSearchHistory(key); load() }
-    } catch (e) {
-      setError((e as Error)?.message || String(e))
-    } finally {
-      setLoading(false)
+    setResults([])
+    setNewsResults([])
+    setSourcesDone(0)
+    setSearched(key)
+
+    const merge = (items: WorkItem[]) =>
+      setResults((prev) => dedup([...prev, ...items]))
+    const jobs: Promise<void>[] = []
+
+    const kinds: Kind[] = sc === 'all' ? ['anime', 'manga'] : [sc as Kind]
+    if (sc === 'all' || sc === 'anime' || sc === 'manga') {
+      setSourcesTotal(SOURCES.length * kinds.length)
+      SOURCES.forEach((src) => {
+        kinds.forEach((k) => {
+          jobs.push(
+            src.search({ kw: key, kind: k, page: 1 })
+              .then((r) => { merge(r.items); setSourcesDone((d) => d + 1) })
+              .catch(() => { setSourcesDone((d) => d + 1) }),
+          )
+        })
+      })
     }
+    if (sc === 'all' || sc === 'news') {
+      jobs.push(
+        fetchNews()
+          .then((r) => {
+            const k = key.toLowerCase()
+            const hits = r.items.filter((n) => n.title.toLowerCase().includes(k))
+            setNewsResults(hits.slice(0, 10))
+            setSourcesDone((d) => d + 1)
+          })
+          .catch(() => { setSourcesDone((d) => d + 1) }),
+      )
+      if (sc === 'news') setSourcesTotal(1)
+      else setSourcesTotal((t) => t + 1)
+    }
+
+    await Promise.allSettled(jobs)
+    setLoading(false)
+    await addSearchHistory(key)
+    load()
   }
 
   const doSearch = (text?: string, kind?: Scope) => {
@@ -53,18 +85,26 @@ export default function SearchPage() {
     if (!kw) return
     setQ(kw)
     if (kind) setScope(kind)
-    run(kw, kind ?? scope, 1, false)
+    run(kw, kind ?? scope)
   }
+
+  const openDetail = (w: WorkItem) => nav(`/detail/${w.sourceId}/${w.kind}/${w.workId}`)
+
+  const groups: { label: string; items: WorkItem[] }[] = [
+    { label: '动漫', items: results.filter((r) => r.kind === 'anime') },
+    { label: '漫画', items: results.filter((r) => r.kind === 'manga') },
+  ]
+  const shownGroups = scope === 'all' ? groups : scope === 'news' ? [] : groups
 
   return (
     <>
       <header className="page-head">
         <h1>搜索</h1>
-        <p>全局搜索 · 数据来自 AniList</p>
+        <p>一次搜索：动漫 · 漫画 · 资讯（AniList + MyAnimeList）</p>
       </header>
 
       <div className="search-bar">
-        <input placeholder="输入作品名（支持英文/罗马音/日文）…" value={q} onChange={(e) => setQ(e.target.value)}
+        <input placeholder="输入作品或资讯关键词…" value={q} onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && doSearch()} />
         <button className="go" onClick={() => doSearch()}>搜索</button>
       </div>
@@ -84,40 +124,42 @@ export default function SearchPage() {
         </Section>
       )}
 
-      {loading && results.length === 0 && <Loading text="正在搜索…" />}
-
-      {error && (
-        <EmptyState icon="info" title="搜索失败" desc={error}
-          actionText="重试" onAction={() => doSearch(searched || q)} />
+      {loading && results.length === 0 && newsResults.length === 0 && (
+        <Loading text={sourcesTotal > 0 ? `正在搜索（${sourcesDone}/${sourcesTotal} 个来源完成）…` : '正在搜索…'} />
       )}
 
-      {results.length > 0 && (
-        <Section title={searched ? `「${searched}」的搜索结果` : '结果'}
-          extra={`共 ${results.length} 条 · AniList`}>
-          {failed.length > 0 && (
-            <div className="news-warn">部分来源不可用：{failed.join('、')}（其余正常）</div>
-          )}
+      {error && (
+        <EmptyState icon="info" title="搜索失败" desc={error} actionText="重试" onAction={() => doSearch(searched || q)} />
+      )}
+
+      {/* 动漫 / 漫画分组结果 */}
+      {shownGroups.map((g) => g.items.length > 0 && (
+        <Section key={g.label} title={`${g.label}（${g.items.length}）`} extra="点击查看详情">
           <div className="work-grid">
-            {results.map((w) => (
-              <WorkCard key={w.sourceId + w.workId} w={w}
-                onClick={() => nav(`/detail/${w.sourceId}/${w.kind}/${w.workId}`)} />
-            ))}
+            {g.items.map((w) => <WorkCard key={w.sourceId + w.kind + w.workId} w={w} onClick={() => openDetail(w)} />)}
           </div>
-          {hasNext && (
-            <button className="load-more" onClick={() => run(searched, scope, page + 1, true)} disabled={loading}>
-              {loading ? '加载中…' : '加载更多'}
-            </button>
+          {scope === 'all' && g.items.length >= 12 && (
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>仅显示匹配前部结果 · 切到「{g.label}」范围看更多</div>
           )}
+        </Section>
+      ))}
+
+      {/* 资讯分组结果 */}
+      {(scope === 'all' || scope === 'news') && newsResults.length > 0 && (
+        <Section title={`资讯（${newsResults.length}）`} extra="近期新闻标题匹配">
+          <div className="news-list">
+            {newsResults.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}
+          </div>
         </Section>
       )}
 
-      {!loading && !error && results.length === 0 && searched && (
-        <EmptyState icon="search" title={`没有找到「${searched}」`} desc="换个关键词或切换范围试试。" />
+      {!loading && searched && results.length === 0 && newsResults.length === 0 && (
+        <EmptyState icon="search" title={`没有找到「${searched}」`} desc="换个关键词、或切换搜索范围试试。" />
       )}
 
       {!loading && !searched && (
         <EmptyState icon="search" title="输入关键词开始搜索"
-          desc="支持英文、罗马音、日文原名。\n多来源聚合搜索在阶段 5 实现（Jikan/Bangumi 等）。" />
+          desc={'默认搜索全部：动漫 + 漫画 + 资讯\n支持英文、罗马音、日文原名\n结果多来源聚合去重（AniList / MyAnimeList）'} />
       )}
     </>
   )

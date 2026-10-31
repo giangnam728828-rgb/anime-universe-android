@@ -11,6 +11,7 @@ import LibraryPage from './modules/library/LibraryPage'
 import LocalDetailPage from './modules/library/LocalDetailPage'
 import ReaderPage from './modules/reader/ReaderPage'
 import NewsPage from './modules/news/NewsPage'
+import NewsViewPage from './modules/news/NewsViewPage'
 import { useSettings } from './stores/settings'
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/local/:id" element={<LocalDetailPage />} />
         <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
         <Route path="/news" element={<NewsPage />} />
+        <Route path="/newsview/:eid" element={<NewsViewPage />} />
       </Routes>
     </HashRouter>
   )
