@@ -43,9 +43,49 @@ export interface SearchOptions {
 
 export interface SearchResult { items: WorkItem[]; hasNext: boolean }
 
+/** 章节条目：sourceId+workId+id 唯一定位（架构 6.4.2.1 验收通过） */
+export interface ChapterItem {
+  id: string
+  sourceId: string
+  workId: string
+  title: string
+  chapter: string
+  volume?: string
+  pages: number
+  translatedLanguage: string
+  group?: string
+  externalUrl?: string
+}
+
+/** 章节图片：由对应适配器返回，无需每图携带来源 ID */
+export interface PageItem {
+  index: number
+  url: string
+  width?: number
+  height?: number
+}
+
+/** 来源可用性检测结果 */
+export interface SourceStatus { ok: boolean; message?: string }
+
 export interface SourceAdapter {
   id: string
   name: string
   search(o: SearchOptions): Promise<SearchResult>
   getDetail(kind: Kind, workId: string): Promise<WorkDetail>
+
+  // --- 漫画阅读链路（可选实现；架构 6.4.2.1 通过） ---
+  /**
+   * 章节列表：支持分页（limit/offset 游标），返回汉化组与语言标识。
+   * 适配器内部需处理语言可用性（如部分语言码服务端 400 时降级为客户端排序）。
+   */
+  getChapters?(workId: string, options?: { limit?: number; cursor?: string }): Promise<{
+    chapters: ChapterItem[]
+    nextCursor?: string
+    hasNext: boolean
+  }>
+  /** 章节图片：getPages 每次返回最新服务器地址；调用方加载 403/404 可带 refresh 强制刷新重试一次 */
+  getPages?(chapterId: string, options?: { refresh?: boolean }): Promise<PageItem[]>
+  /** 来源可用性检测（如 /ping） */
+  status?(): Promise<SourceStatus>
 }

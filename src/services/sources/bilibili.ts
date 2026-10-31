@@ -1,38 +1,23 @@
-/** Bilibili 番剧/国创适配器（阶段 6.4.2）
+/** Bilibili 番剧/国创适配器（阶段 6.4.2 / 6.4.2.2）
  *  接口（6.4.1 实测，公开网页端接口，无需登录/Token）：
  *  - 列表: GET api.bilibili.com/pgc/season/index/result?season_type=1|2&page=1&pagesize=10&type=1&year=YYYY
  *  - 详情: GET api.bilibili.com/pgc/view/web/season?season_id=ID
  *  仅获取作品元数据与页面入口（siteUrl 指向 B 站页面），不请求/解析任何视频流。
- *  需要请求头 UA + Referer（网页端常规头）；实测约 1/3 概率网络波动 → 重试 2 次 + 内存缓存 5min。
- *  搜索接口依赖浏览器 cookie（实测假 cookie 返回空结果），故本适配器不提供关键词搜索，
- *  关键词搜索由 AniList/MangaDex 承担；B 站源用于浏览（首页/发现页的中文动漫内容）。
+ *  请求头只用正常允许的 UA + Referer + 固定通用头；有限重试 + 内存缓存。
+ *  合规约定（6.4.2.1 验收通过）：不使用任何动态设备指纹(如 x/frontend/finger/spi → buvid)
+ *  也不规避验证；接口要求额外验证(风控/登录)时如实报错，由多来源聚合降级，不伪造指纹。
+ *  B漫搜索复用静态通用头尽力而为，失败则报告来源不可用（不绕过访问控制）。
  */
 import { httpGetText, httpPostJson } from '../api/nativeHttp'
 import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole } from './types'
 
 const BASE = 'https://api.bilibili.com'
 const UA_BILI = 'Mozilla/5.0 (Linux; Android 14) AnimeUniverse/0.6'
-const HEADERS = { Referer: 'https://www.bilibili.com/', Accept: 'application/json', Cookie: 'buvid3=AF3B4C9E-8B21-4C6A-9D0E-3F5A7B8C9D1Einfoc; b_nut=1700000000' }
+/** 固定普通请求头（非动态指纹；B站网页端常规头） */
+const HEADERS = { Referer: 'https://www.bilibili.com/', Accept: 'application/json' }
 
-/* ── B站漫画（mc 搜索，公开网页端接口；6.4.2 实测 Search 可用，详情/分类接口被风控）── */
+/* ── B站漫画（mc 搜索，公开网页端接口；仅用静态头尽力调用，风控则报错降级）── */
 const MANGA_API = 'https://manga.bilibili.com/twirp/comic.v1.Comic/Search?device=pc&platform=web'
-
-let buvidCk: string | null = null
-/** spi 指纹接口拿真实 buvid（公开无登录）；失败用静态兜底 */
-async function ensureBuvid(): Promise<string> {
-  if (buvidCk) return buvidCk
-  try {
-    const r = await httpGetText(`${BASE}/x/frontend/finger/spi`, 8000)
-    if (r.status === 200) {
-      const d = JSON.parse(r.text)?.data
-      if (d?.b_3) {
-        buvidCk = `buvid3=${d.b_3}; buvid4=${d.b_4 || ''}`
-        return buvidCk
-      }
-    }
-  } catch { /* 忽略，走兜底 */ }
-  return HEADERS.Cookie!
-}
 
 const mangaDetailMap = new Map<string, WorkItem>()
 const mangaAuthors = new Map<string, string[]>()
@@ -59,10 +44,10 @@ function mapMangaComic(it: any): WorkItem | null {
 }
 
 async function mangaSearch(kw: string): Promise<SearchResult> {
-  const ck = await ensureBuvid()
+  // 仅用静态普通头，不携带/获取设备指纹；B漫 Search 若被风控(code!=0)或401/403，如实抛错由聚合降级
   const r = await httpPostJson(
     MANGA_API,
-    { 'User-Agent': UA_BILI, Referer: 'https://manga.bilibili.com/', Accept: 'application/json', Cookie: ck },
+    { 'User-Agent': UA_BILI, Referer: 'https://manga.bilibili.com/', Accept: 'application/json' },
     { keyWord: kw, pageNum: 1, pageSize: 20 },
     10000,
   )

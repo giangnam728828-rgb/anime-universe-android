@@ -1,16 +1,13 @@
-/** MangaDex 漫画适配器（阶段 6.4.2）
- *  官方开放 API（api.mangadex.org），免 Token，官方允许第三方客户端使用，支持分页（limit/offset）。
- *  6.4.1 实测：total≈55k，偶发网络波动 → 重试 2 次 + 内存缓存。
+/** MangaDex 漫画适配器（阶段 6.4.2.2）
+ *  官方开放 API（api.mangadex.org），免 Token，支持分页（limit/offset）。
  *
- *  标题规则（按需求实现）：
- *  1. 主标题(title)含中文（zh-hans/zh/zh-cn 简体、zh-hant/zh-tw 繁体）优先；
- *  2. 主标题无中文 → altTitles 里按 简体>繁体>任意zh* 提取；
- *  3. 简繁分开识别（titleLang 标注 zh-hans / zh-hant）；
- *  4. 无中文 → 保留原文（en/ja-ro/ja/原文首键），titleLang 标注实际语言。
- *  简介规则同理（descLang 标注），本阶段不使用 AI 翻译。
+ *  标题规则：中文主标题 > altTitles 中文别名(简>繁) > 原文标语言。
+ *  简介规则：中文优先 > 原文标语言。
+ *  阅读链路：feed (章节列表) -> at-home/server (图片服务器) -> 图片直链。
+ *  失效恢复：图片 403/404 时重新请求 at-home 服务器地址并重试。
  */
 import { httpGetText } from '../api/nativeHttp'
-import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole } from './types'
+import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole, ChapterItem, PageItem } from './types'
 
 const BASE = 'https://api.mangadex.org'
 const COVER = 'https://uploads.mangadex.org/covers'
@@ -18,6 +15,10 @@ const COVER = 'https://uploads.mangadex.org/covers'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const memCache = new Map<string, { t: number; v: any }>()
 const TTL = 5 * 60 * 1000
+
+// at-home 服务器信息缓存（短期，方便失效刷新）
+const serverCache = new Map<string, { t: number; v: any }>()
+const SERVER_TTL = 10 * 60 * 1000
 
 async function mdGet(path: string): Promise<any> {
   const hit = memCache.get(path)
@@ -48,11 +49,9 @@ const zhKey = (obj: Record<string, string>): string | undefined => {
   return undefined
 }
 
-/** 标题选择：中文主标题 > 中文别名(简>繁) > 原文主标题；返回 {text, lang, isOriginal} */
 function pickTitle(title: Record<string, string>, altTitles: Record<string, string>[]): { text: string; lang: string; original: boolean } {
   const zhMain = zhKey(title)
   if (zhMain) return { text: title[zhMain], lang: zhMain.toLowerCase(), original: true }
-  // 别名：先简体，再繁体，再任意 zh*
   for (const pref of [...ZH_SIMP, ...ZH_TRAD]) {
     for (const alt of altTitles) {
       const v = alt[pref]
@@ -63,7 +62,6 @@ function pickTitle(title: Record<string, string>, altTitles: Record<string, stri
     const k = Object.keys(alt).find((x) => x.toLowerCase().startsWith('zh'))
     if (k && alt[k]?.trim()) return { text: alt[k], lang: k, original: false }
   }
-  // 无中文：原文主标题
   const fallbackKey = title.en ? 'en' : (Object.keys(title)[0] ?? '')
   return { text: title[fallbackKey] || Object.values(title)[0] || '未命名', lang: fallbackKey, original: true }
 }
@@ -83,7 +81,6 @@ const STATUS_CN: Record<string, string> = {
   ongoing: '连载中', completed: '已完结', hiatus: '休载', cancelled: '已取消',
 }
 
-/** 常用标签英→中（未收录标签保留英文原文） */
 const TAG_CN: Record<string, string> = {
   Action: '热血', Adventure: '冒险', Comedy: '搞笑', Drama: '剧情', Fantasy: '奇幻',
   Horror: '恐怖', Mystery: '悬疑', Psychological: '心理', Romance: '恋爱', 'Sci-Fi': '科幻',
@@ -163,6 +160,70 @@ const mangadex: SourceAdapter = {
       siteUrl: `https://mangadex.org/title/${workId}`,
     }
   },
+
+  async getChapters(workId: string, options?: { limit?: number; cursor?: string }): Promise<{ chapters: ChapterItem[]; nextCursor?: string; hasNext: boolean }> {
+    const limit = options?.limit ?? PAGE
+    const offset = options?.cursor ? parseInt(options.cursor) : 0
+    const q = new URLSearchParams()
+    q.set('limit', String(limit))
+    q.set('offset', String(offset))
+    q.set('order[chapter]', 'desc')
+    q.set('includes[]', 'scanlation_group')
+    q.set('contentRating[]', 'safe')
+    q.set('contentRating[]', 'suggestive')
+    // 说明：本网络下服务端对 translatedLanguage[]=zh-hans/zh-hant 返回 400（BCP47 正则限制），
+    // 故不过滤语言，拉取全语言章节后由 UI 用 translatedLanguage 徽标区分/筛选（见 6.4.2.2 实测记录）。
+    const json = await mdGet(`/manga/${encodeURIComponent(workId)}/feed?${q.toString()}`)
+    const items = (json.data || []).map((c: any): ChapterItem => {
+      const a = c.attributes
+      const grp = (c.relationships || []).find((r: any) => r.type === 'scanlation_group')
+      return {
+        id: c.id,
+        sourceId: 'mangadex',
+        workId,
+        title: a.title || '(无标题)',
+        chapter: a.chapter || '-',
+        volume: a.volume,
+        pages: a.pages,
+        translatedLanguage: a.translatedLanguage,
+        group: grp?.attributes?.name,
+        externalUrl: a.externalUrl,
+      }
+    })
+    const total = json.total ?? 0
+    return {
+      chapters: items,
+      nextCursor: offset + items.length < total ? String(offset + items.length) : undefined,
+      hasNext: offset + items.length < total,
+    }
+  },
+
+  async getPages(chapterId: string, options?: { refresh?: boolean }): Promise<PageItem[]> {
+    // at-home 服务器地址做短期内存缓存；refresh=true（图片 403/404 后由调用方触发）强制重新获取一次
+    const getServer = async () => {
+      const hit = serverCache.get(chapterId)
+      if (!options?.refresh && hit && Date.now() - hit.t < SERVER_TTL) return hit.v
+      const json = await mdGet(`/at-home/server/${chapterId}`)
+      const res = { baseUrl: json.baseUrl, hash: json.chapter.hash, data: json.chapter.data }
+      serverCache.set(chapterId, { t: Date.now(), v: res })
+      return res
+    }
+
+    const { baseUrl, hash, data } = await getServer()
+    return (data || []).map((fileName: string, index: number) => ({
+      index,
+      url: `${baseUrl}/data/${hash}/${fileName}`,
+    }))
+  },
+
+  async status(): Promise<{ ok: boolean; message?: string }> {
+    try {
+      const r = await mdGet('/ping')
+      return { ok: r === 'pong' }
+    } catch (e: any) {
+      return { ok: false, message: e.message }
+    }
+  }
 }
 
 export default mangadex
