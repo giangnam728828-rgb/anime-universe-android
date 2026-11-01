@@ -4,7 +4,8 @@ import Icon, { type IconName } from '../../components/Icon'
 import { Section, EmptyState, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import NewsSection from '../news/NewsSection'
-import { useHomeStore } from './homeStore'
+import { useHomeStore, type BlockState } from './homeStore'
+import { SOURCE_NAMES } from '../../services/sources'
 import type { WorkItem } from '../../services/sources'
 
 const quicks: { icon: IconName; label: string; to?: string; wip?: boolean }[] = [
@@ -15,26 +16,50 @@ const quicks: { icon: IconName; label: string; to?: string; wip?: boolean }[] = 
   { icon: 'tool', label: '工具箱', wip: true },
 ]
 
-function HomeRow({ title, workId, data, onOpen }: {
-  title: string; workId: string; data: ReturnType<typeof useHomeStore.getState>[typeof workId extends never ? 'anime' : 'anime' | 'manga']; onOpen: (w: WorkItem) => void
+const BLOCK_NAME: Record<string, string> = { anime: 'anime', manga: 'manga' }
+
+/** 首页区块：独立 loading/error/数据，渐进渲染（快源先画），失败可单独重试 */
+function HomeRow({ title, extra, block, data, onOpen }: {
+  title: string
+  extra?: string
+  block: 'anime' | 'manga'
+  data: BlockState
+  onOpen: (w: WorkItem) => void
 }) {
   const retryBlock = useHomeStore((s) => s.retryBlock)
   const items = data.items
+  const failedNames = Object.keys(data.failed || {})
+    .map((id) => SOURCE_NAMES[id] || id)
+    .join('、')
+
   return (
-    <Section title={title} extra={
-      data.loading && items.length ? <span className="mini-loading">刷新中…</span> : undefined
-    }>
+    <Section
+      title={title}
+      extra={extra}
+    >
       {data.loading && !items.length ? (
         <Loading />
-      ) : data.error && !items.length ? (
-        <EmptyState icon="info" title="内容加载失败" desc={data.error}
-          actionText="重试" onAction={() => retryBlock(workId as 'anime' | 'manga')} />
-      ) : items.length === 0 ? (
-        <EmptyState title="暂无数据" />
+      ) : !items.length ? (
+        <EmptyState
+          icon="info"
+          title="内容加载失败"
+          desc={failedNames ? `${failedNames} 不可用（${Object.values(data.failed)[0]}）` : '暂无数据'}
+          actionText="重试"
+          onAction={() => retryBlock(BLOCK_NAME[block] as 'anime' | 'manga')}
+        />
       ) : (
-        <div className="h-scroll">
-          {items.map((w) => <WorkCard key={`${w.sourceId}-${w.workId}`} w={w} onClick={() => onOpen(w)} />)}
-        </div>
+        <>
+          <div className="h-scroll">
+            {items.map((w) => <WorkCard key={`${w.sourceId}-${w.workId}`} w={w} onClick={() => onOpen(w)} />)}
+          </div>
+          {data.loading && <div className="block-partial">部分来源加载中…（已显示快源内容）</div>}
+          {!data.loading && failedNames && (
+            <div className="block-partial">
+              {failedNames} 加载失败（{Object.values(data.failed)[0]}）
+              <button className="link-btn" onClick={() => retryBlock(block)}>重试</button>
+            </div>
+          )}
+        </>
       )}
     </Section>
   )
@@ -49,13 +74,13 @@ export default function HomePage() {
   const hydrate = useHomeStore((s) => s.hydrate)
   const scrollY = useHomeStore((s) => s.scrollY)
 
-  // 挂载即 hydrate（有缓存立即显示 + 过期后台刷新）；卸载时记录滚动位置
+  // 挂载即 hydrate（缓存有效立即显示、不重复请求；过期后台刷新）；卸载时记录滚动位置
   useEffect(() => {
     hydrate()
-    const main = document.querySelector<HTMLElement>('main.page') ?? document.scrollingElement
+    const main = document.querySelector<HTMLElement>('main.page')
     if (main && scrollY > 0) main.scrollTop = scrollY
     return () => {
-      const m = document.querySelector<HTMLElement>('main.page') ?? document.scrollingElement
+      const m = document.querySelector<HTMLElement>('main.page')
       if (m) setScrollY(m.scrollTop)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,8 +112,8 @@ export default function HomePage() {
         </div>
       </Section>
 
-      <HomeRow title="热门动漫" workId="anime" data={anime} onOpen={open} />
-      <HomeRow title="热门漫画" workId="manga" data={manga} onOpen={open} />
+      <HomeRow title="热门动漫" extra="多来源聚合" block="anime" data={anime} onOpen={open} />
+      <HomeRow title="热门漫画" extra="多来源聚合" block="manga" data={manga} onOpen={open} />
 
       <Section title="最新资讯" extra={
         <button onClick={() => nav('/news')} style={{ color: 'var(--accent)', fontSize: 11.5 }}>更多 ›</button>

@@ -3,7 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import { Section, EmptyState, Loading, Modal } from '../../components/ui'
 import { useAsync } from '../../hooks/useAsync'
-import { getSource, SOURCE_NAMES, type Kind, type WorkDetail } from '../../services/sources'
+import { getSource, type Kind, type WorkDetail } from '../../services/sources'
+import SourceBadge from '../../components/SourceBadge'
+import SmartImage from '../../components/SmartImage'
 import { isFavorited, toggleFavorite } from '../../database/db'
 
 export const favKeyOf = (sourceId: string, kind: string, workId: string) => `${sourceId}-${kind}-${workId}`
@@ -58,7 +60,7 @@ export default function DetailPage() {
 
       <div className="detail-hero">
         <div className="dh-cover">
-          {d.cover ? <img src={d.cover} alt="" /> : null}
+          <SmartImage src={d.cover} fallbackIcon={d.kind === 'manga' ? 'book' : 'film'} />
         </div>
         <div className="dh-info">
           <div className="dh-title">{d.title}</div>
@@ -82,7 +84,7 @@ export default function DetailPage() {
         {d.volumes != null && <div className="info-item"><div className="il">卷数</div><div className="iv">{d.volumes}</div></div>}
         {d.duration != null && <div className="info-item"><div className="il">单集时长</div><div className="iv">{d.duration} 分钟</div></div>}
         {d.favorites != null && <div className="info-item"><div className="il">收藏人数</div><div className="iv">{d.favorites.toLocaleString()}</div></div>}
-        <div className="info-item"><div className="il">数据来源</div><div className="iv" style={{ color: 'var(--accent)' }}>{SOURCE_NAMES[d.sourceId] || d.sourceId}</div></div>
+        <div className="info-item"><div className="il">数据来源</div><div className="iv"><SourceBadge sourceId={d.sourceId} /></div></div>
       </div>
 
       {d.genres.length > 0 && (

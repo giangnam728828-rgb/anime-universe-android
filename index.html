@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0A0A0F" />
+  <!-- P0 修复：WebView 对 img 子资源默认带 Referer: https://localhost/，B站图床防盗链 403；
+       全局不发送 Referer（实测 B站 200 / AniList/MangaDex 不受影响；不关闭混合内容安全限制） -->
+  <meta name="referrer" content="no-referrer" />
   <title>动漫宇宙 | Anime Universe</title>
   <script>
     try {

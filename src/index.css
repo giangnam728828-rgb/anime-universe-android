@@ -306,13 +306,40 @@ input { font-family: inherit; color: inherit; }
   font-size: 12px; font-weight: 500; line-height: 1.35;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
+  min-height: 33px; max-height: 33px; /* P1: 固定2行高度，卡片布局跨来源一致 */
 }
-.wc-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); }
+.wc-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); min-height: 15px; }
 .wc-score { color: #FACC15; font-weight: 600; }
-.wc-src {
-  margin-left: auto; font-size: 9px; color: var(--accent);
-  border: 1px solid rgba(56,189,248,0.35); border-radius: 4px; padding: 0 4px;
+/* P1: 统一来源标签（SourceBadge 组件专用）——固定高度/字号/内边距/圆角，长名省略不撑大 */
+.wc-foot { margin-top: auto; display: flex; min-height: 18px; }
+.src-badge {
+  display: inline-flex; align-items: center;
+  height: 18px; max-width: 100%;
+  padding: 0 6px; border-radius: 6px;
+  font-size: 9.5px; line-height: 1; white-space: nowrap;
+  color: var(--accent); border: 1px solid rgba(56,189,248,0.35);
+  overflow: hidden; text-overflow: ellipsis;
+  flex-shrink: 0;
 }
+
+/* SmartImage 统一图片：占位/淡入/失败兜底 */
+.smart-img-ph {
+  position: absolute; inset: 0;
+  background: linear-gradient(110deg, var(--bg2) 30%, rgba(255,255,255,0.04) 50%, var(--bg2) 70%);
+  background-size: 200% 100%; animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+.smart-img-fallback {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); background: var(--bg2);
+}
+img.is-loading { opacity: 0; }
+img.is-loaded { opacity: 1; transition: opacity 0.25s; }
+
+/* 首页区块辅助行：部分来源失败/加载中提示 */
+.block-partial { font-size: 10.5px; color: var(--muted); padding: 4px 2px 0; }
+.link-btn { background: none; border: none; color: var(--accent); font-size: 10.5px; padding: 0 0 0 6px; }
 
 /* 首页横滑 */
 .h-scroll { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }

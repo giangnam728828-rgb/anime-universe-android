@@ -9,6 +9,7 @@
  *  B漫搜索复用静态通用头尽力而为，失败则报告来源不可用（不绕过访问控制）。
  */
 import { httpGetText, httpPostJson } from '../api/nativeHttp'
+import { normalizeCover } from '../../utils/cover'
 import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole } from './types'
 
 const BASE = 'https://api.bilibili.com'
@@ -34,7 +35,7 @@ function mapMangaComic(it: any): WorkItem | null {
     workId: wid,
     kind: 'manga',
     title,
-    cover: it.vertical_cover || it.square_cover || it.horizontal_cover || undefined,
+    cover: normalizeCover(it.vertical_cover || it.square_cover || it.horizontal_cover),
     genres: (it.styles || []).filter(Boolean),
     statusCn: it.is_finish === 1 ? '已完结' : it.is_finish === 0 ? '连载中' : undefined,
     formatCn: '漫画（B漫）',
@@ -102,7 +103,7 @@ function mapItem(it: any, kind: '番剧' | '国创', year: number): WorkItem | n
     kind: 'anime',
     title,
     titleNative: it.origin_name || undefined,
-    cover: it.cover || undefined,
+    cover: normalizeCover(it.cover),
     description: desc,
     score: score && score > 0 ? score : undefined,
     year,
@@ -174,7 +175,7 @@ const bilibili: SourceAdapter = {
       kind: 'anime',
       title: (r.title || '').replace(/<[^>]*>/g, '').trim(),
       titleNative: r.origin_name || undefined,
-      cover: r.cover || undefined,
+      cover: normalizeCover(r.cover),
       description: (r.evaluate || '').replace(/<[^>]*>/g, '').trim() || undefined,
       score: score && score > 0 ? score : undefined,
       year: r.publish?.pub_time ? Number(String(r.publish.pub_time).slice(0, 4)) : undefined,

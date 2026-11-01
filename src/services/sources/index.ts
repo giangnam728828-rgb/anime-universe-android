@@ -40,18 +40,49 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   })
 }
 
-/** 多来源聚合搜索：Promise.allSettled + 每源 8s 超时，单源失败/超时不影响整体 */
+/** 错误分类（P0：失败原因可观测，不笼统报"失败"） */
+export function classifyError(e: unknown): 'timeout' | 'network_error' | 'http_error' | 'parse_error' | 'unavailable' {
+  const msg = ((e as Error)?.message || String(e) || '').toLowerCase()
+  if (msg.includes('源超时') || msg.includes('timeout') || msg.includes('abort')) return 'timeout'
+  if (msg.includes('http 4') || msg.includes('http 5') || msg.includes('403') || msg.includes('429')) return 'http_error'
+  if (msg.includes('json') || msg.includes('parse') || msg.includes('unexpected')) return 'parse_error'
+  if (msg.includes('network') || msg.includes('ssl') || msg.includes('unreachable') || msg.includes('failed to fetch')) return 'network_error'
+  return 'unavailable'
+}
+
+/** 统一出口规范化：封面 https 升级 + 去重（流式/聚合共用） */
+function finish(items: WorkItem[]): WorkItem[] {
+  return dedup(items.map((i) => (i.cover ? { ...i, cover: normalizeCover(i.cover) } : i)))
+}
+
+/**
+ * 流式多来源聚合（P0 新增）：每源独立 8s 超时，**某源完成即回调 onBatch**，
+ * 首页快源（AniList/B站 1~2s）先渲染，慢源（MangaDex）后到渐进补入，互不阻塞。
+ * 返回各源失败原因（sourceId → 分类）。
+ */
+export async function searchAllStream(
+  opts: { kw?: string; kind: WorkItem['kind']; genre?: string; sort?: string; page?: number },
+  onBatch: (batch: WorkItem[], sourceId: string) => void,
+): Promise<{ failed: Record<string, string> }> {
+  const failed: Record<string, string> = {}
+  await Promise.allSettled(
+    SOURCES.map(async (s) => {
+      try {
+        const r = await withTimeout(s.search(opts), 8000)
+        if (r.items.length) onBatch(finish(r.items), s.id)
+      } catch (e) {
+        failed[s.id] = classifyError(e)
+      }
+    }),
+  )
+  return { failed }
+}
+
+/** 多来源聚合搜索（一次性）：基于流式实现，兼容搜索页现有用法 */
 export async function searchAll(opts: { kw?: string; kind: WorkItem['kind']; genre?: string; sort?: string; page?: number }): Promise<{ items: WorkItem[]; failed: string[] }> {
-  const rs = await Promise.allSettled(SOURCES.map((s) => withTimeout(s.search(opts), 8000)))
   const items: WorkItem[] = []
-  const failed: string[] = []
-  rs.forEach((r, idx) => {
-    if (r.status === 'fulfilled') items.push(...r.value.items)
-    else failed.push(SOURCES[idx].name)
-  })
-  // P0 修复：统一把所有来源封面的 http:// 升级为 https://（Capacitor WebView mixed-content 拦截 http）
-  const norm = items.map((i) => (i.cover ? { ...i, cover: normalizeCover(i.cover) } : i))
-  return { items: dedup(norm), failed }
+  const { failed } = await searchAllStream(opts, (batch) => items.push(...batch))
+  return { items: finish(items), failed: Object.keys(failed).map((id) => SOURCE_NAMES[id] || id) }
 }
 
 export type { WorkItem, WorkDetail, SearchOptions, SearchResult, Kind } from './types'
