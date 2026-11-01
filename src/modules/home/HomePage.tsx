@@ -6,6 +6,7 @@ import WorkCard from '../../components/WorkCard'
 import NewsSection from '../news/NewsSection'
 import { useHomeStore, type BlockState } from './homeStore'
 import { SOURCE_NAMES } from '../../services/sources'
+import { perf } from '../../services/perf'
 import type { WorkItem } from '../../services/sources'
 
 const quicks: { icon: IconName; label: string; to?: string; wip?: boolean }[] = [
@@ -76,9 +77,17 @@ export default function HomePage() {
 
   // 挂载即 hydrate（缓存有效立即显示、不重复请求；过期后台刷新）；卸载时记录滚动位置
   useEffect(() => {
+    const mountT0 = Date.now()
+    const cached = (useHomeStore.getState().anime.items.length || useHomeStore.getState().manga.items.length)
+    perf({ phase: cached ? 'home-restore' : 'home-mount', status: cached ? 'cache-hit' : 'ok',
+      detail: `滚动恢复=${scrollY > 0 ? scrollY : 0}px` })
     hydrate()
     const main = document.querySelector<HTMLElement>('main.page')
     if (main && scrollY > 0) main.scrollTop = scrollY
+    // 缓存恢复耗时：挂载→同步渲染后（hydrate 内存读 <1ms，用 rAF 观测首帧后）
+    requestAnimationFrame(() => {
+      perf({ phase: cached ? 'restore-painted' : 'mount-painted', ms: Date.now() - mountT0, detail: cached ? `命中${cached}区块缓存` : '全新挂载' })
+    })
     return () => {
       const m = document.querySelector<HTMLElement>('main.page')
       if (m) setScrollY(m.scrollTop)

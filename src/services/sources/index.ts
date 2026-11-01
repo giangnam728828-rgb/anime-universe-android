@@ -1,6 +1,7 @@
 /** 内容来源注册表：每来源独立适配器，单源故障不影响其他来源 */
 import type { SourceAdapter, WorkItem } from './types'
 import { normalizeCover } from '../../utils/cover'
+import { perf } from '../perf'
 import anilist from './anilist'
 import jikan from './jikan'
 import bilibili from './bilibili'
@@ -67,11 +68,15 @@ export async function searchAllStream(
   const failed: Record<string, string> = {}
   await Promise.allSettled(
     SOURCES.map(async (s) => {
+      const t0 = Date.now() // 阶段2性能计时：每源独立（开始/结束/耗时/成败）
       try {
         const r = await withTimeout(s.search(opts), 8000)
+        perf({ phase: 'source-request', sourceId: s.id, status: 'ok', ms: Date.now() - t0, detail: `${r.items.length}条` })
         if (r.items.length) onBatch(finish(r.items), s.id)
       } catch (e) {
-        failed[s.id] = classifyError(e)
+        const kind = classifyError(e)
+        perf({ phase: 'source-request', sourceId: s.id, status: 'fail', ms: Date.now() - t0, detail: kind })
+        failed[s.id] = kind
       }
     }),
   )

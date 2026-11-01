@@ -10,8 +10,9 @@
  *     占位/图片/兜底全部收在 wrap 内——无论父级是否有定位上下文都不会逃逸（结构性根治）。
  * 同时提供：懒加载、加载占位、失败有限重试(1次)、最终失败显示占位图标（永不显示破图）。
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Icon, { type IconName } from './Icon'
+import { perf } from '../services/perf'
 
 interface Props {
   src?: string
@@ -25,12 +26,14 @@ export default function SmartImage({ src, alt = '', fallbackIcon = 'film', class
   const [attempt, setAttempt] = useState(0) // 0=首次, 1=重试1次, 2=放弃
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
+  const t0 = useRef(Date.now()) // 阶段2计时：图片开始→完成
 
   // src 变化时重置状态（卡片复用/详情切换）
   useEffect(() => {
     setAttempt(0)
     setLoaded(false)
     setFailed(false)
+    t0.current = Date.now()
   }, [src])
 
   return (
@@ -50,10 +53,18 @@ export default function SmartImage({ src, alt = '', fallbackIcon = 'film', class
             loading="lazy"
             decoding="async"
             referrerPolicy="no-referrer"
-            onLoad={() => setLoaded(true)}
+            onLoad={() => {
+              setLoaded(true)
+              perf({ phase: 'img-load', status: 'ok', ms: Date.now() - t0.current, detail: attempt ? `重试${attempt}成功` : undefined })
+            }}
             onError={() => {
-              if (attempt < 1) setAttempt((a) => a + 1) // 有限重试 1 次（瞬时网络抖动）
-              else setFailed(true)
+              if (attempt < 1) {
+                setAttempt((a) => a + 1) // 有限重试 1 次（瞬时网络抖动）
+                t0.current = Date.now()
+              } else {
+                setFailed(true)
+                perf({ phase: 'img-load', status: 'fail', ms: Date.now() - t0.current, detail: '重试后仍失败' })
+              }
             }}
           />
         </>

@@ -2,8 +2,10 @@ import { useState } from 'react'
 import Icon from '../../components/Icon'
 import { Row, Modal, Section } from '../../components/ui'
 import { useSettings, type ThemeMode, type ReaderMode, type ReaderBg, READER_BG_CSS } from '../../stores/settings'
+import { useNavigate } from 'react-router-dom'
 
 export default function ProfilePage() {
+  const nav = useNavigate()
   const { theme, setTheme, readerMode, setReaderMode, readerBg, setReaderBg } = useSettings()
   const [about, setAbout] = useState(false)
   const [reading, setReading] = useState(false)
@@ -42,6 +44,7 @@ export default function ProfilePage() {
         <div className="rows">
           <Row icon="settings" title="数据管理" desc="备份 / 恢复本机数据（阶段 2）" wip />
           <Row icon="tool" title="缓存管理" desc="清理图片与请求缓存（阶段 4）" wip />
+          <Row icon="tool" title="性能日志（调试）" desc="首页加载各环节计时数据" onClick={() => nav('/perf')} />
         </div>
       </Section>
 

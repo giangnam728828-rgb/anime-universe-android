@@ -10,6 +10,7 @@ import DetailPage from './modules/detail/DetailPage'
 import LibraryPage from './modules/library/LibraryPage'
 import LocalDetailPage from './modules/library/LocalDetailPage'
 import ReaderPage from './modules/reader/ReaderPage'
+import PerfPage from './modules/perf/PerfPage'
 import NewsPage from './modules/news/NewsPage'
 import NewsViewPage from './modules/news/NewsViewPage'
 import NewsSourcesPage from './modules/news/NewsSourcesPage'
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/local/:id" element={<LocalDetailPage />} />
         <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
+        <Route path="/perf" element={<PerfPage />} />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/newsview/:eid" element={<NewsViewPage />} />
         <Route path="/news-sources" element={<NewsSourcesPage />} />

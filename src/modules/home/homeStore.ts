@@ -10,6 +10,7 @@
  */
 import { create } from 'zustand'
 import { searchAllStream, dedup, type WorkItem } from '../../services/sources'
+import { perf } from '../../services/perf'
 
 const TTL = 10 * 60 * 1000
 
@@ -18,6 +19,7 @@ type Block = 'anime' | 'manga'
 export interface BlockState {
   items: WorkItem[]
   loadedAt?: number
+  runStartAt?: number
   loading: boolean
   /** 每源失败原因（sourceId → 分类），空对象=全部成功 */
   failed: Record<string, string>
@@ -47,17 +49,27 @@ export const useHomeStore = create<HomeState>((set, get) => ({
   _run: async (block, force) => {
     if (get().inflight[block]) return get().inflight[block]
     const cur = get()[block]
-    if (!force && cur.items.length && cur.loadedAt && Date.now() - cur.loadedAt < TTL) return
+    if (!force && cur.items.length && cur.loadedAt && Date.now() - cur.loadedAt < TTL) {
+      perf({ phase: 'hydrate', sourceId: block, status: 'cache-hit', detail: 'TTL内不重复请求' })
+      return
+    }
 
     const prom = (async () => {
+      const runT0 = Date.now() // 阶段2计时：区块请求全程
+      set({ [block]: { ...get()[block], runStartAt: runT0 } } as never)
       if (!cur.items.length) set({ [block]: { ...get()[block], loading: true } } as never)
+      let firstBatchDone = false
       try {
         const { failed } = await searchAllStream(
           { kind: block === 'anime' ? 'anime' : 'manga', sort: block === 'anime' ? 'trending' : '热门' },
-          (batch) => {
+          (batch, sourceId) => {
             // 渐进补入：快源先到先画（与已有项合并去重）
             const merged = dedup([...get()[block].items, ...batch]).slice(0, 12)
             set({ [block]: { ...get()[block], items: merged } } as never)
+            if (!firstBatchDone) { // 首批卡片出现时刻（每区块一次）
+              firstBatchDone = true
+              perf({ phase: 'first-batch', sourceId, status: 'ok', ms: Date.now() - runT0, detail: block })
+            }
           },
         )
         set({
@@ -68,6 +80,13 @@ export const useHomeStore = create<HomeState>((set, get) => ({
             failed,
           },
         } as never)
+        perf({ phase: 'block-complete', sourceId: block, status: Object.keys(failed).length ? 'fail' : 'ok', ms: Date.now() - runT0, detail: `${get()[block].items.length}条` })
+        // 首页主要模块全部完成（两区块都结束时打一次）
+        const a = get().anime; const m = get().manga
+        if (!a.loading && !m.loading && a.loadedAt && m.loadedAt) {
+          const start = Math.min(a.runStartAt ?? runT0, m.runStartAt ?? runT0)
+          perf({ phase: 'home-complete', status: 'ok', ms: Date.now() - start, detail: `动漫${a.items.length}+漫画${m.items.length}` })
+        }
       } catch (e) {
         set({
           [block]: {
