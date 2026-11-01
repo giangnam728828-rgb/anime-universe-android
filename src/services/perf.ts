@@ -14,14 +14,26 @@ export interface PerfEntry {
   detail?: string     // 补充信息（不含敏感参数）
 }
 
-const MAX = 400
-const buf: PerfEntry[] = []
+const MAX = 600
+const LS_KEY = 'au_perf_log'
+
+/** 持久化：localStorage（清"缓存"不清 localStorage——冷启动 force-stop 杀进程后数据不丢，
+ *  全部场景可累积后一次性复制采集；仅"清除数据/卸载"才清空） */
+function loadPersist(): PerfEntry[] {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]') } catch { return [] }
+}
+function savePersist(): void {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(buf)) } catch { /* 容量满静默 */ }
+}
+
+const buf: PerfEntry[] = loadPersist().slice(-MAX)
 
 export function perf(e: Omit<PerfEntry, 't'>): void {
   const entry: PerfEntry = { t: Date.now(), ...e }
   buf.push(entry)
   if (buf.length > MAX) buf.shift()
-  // console 桥接到 logcat（chromium tag），远程可采集
+  savePersist()
+  // console 桥接（debug 构建可走 logcat；release 走剪贴板通道）
   console.log(`[AU-PERF] ${JSON.stringify(entry)}`)
 }
 
@@ -31,6 +43,7 @@ export function getPerfLog(): PerfEntry[] {
 
 export function clearPerf(): void {
   buf.length = 0
+  try { localStorage.removeItem(LS_KEY) } catch { /* ignore */ }
   console.log('[AU-PERF] cleared')
 }
 
