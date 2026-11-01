@@ -69,8 +69,11 @@ export const useHomeStore = create<HomeState>((set, get) => ({
             if (!firstBatchDone) { // 首批卡片出现时刻（每区块一次）
               firstBatchDone = true
               perf({ phase: 'first-batch', sourceId, status: 'ok', ms: Date.now() - runT0, detail: block })
+              // O2: 首个来源成功 → 立即结束该区块首轮 loading；其余源后台继续、结果继续追加
+              set({ [block]: { ...get()[block], loading: false } } as never)
             }
           },
+          { skipUnhealthy: true }, // O1: 首页路径启用健康记忆（搜索/详情不受影响）
         )
         set({
           [block]: {

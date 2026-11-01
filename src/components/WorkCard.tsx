@@ -4,6 +4,7 @@
  * 不同来源/标题长度下卡片布局一致；来源标签用统一 SourceBadge 组件。
  * 图片用 SmartImage：懒加载、no-referrer(B站防盗链修复)、占位、有限重试、失败兜底图标。
  */
+import { useEffect, useRef, useState } from 'react'
 import SourceBadge from './SourceBadge'
 import SmartImage from './SmartImage'
 import { getSource, type WorkItem } from '../services/sources'
@@ -14,10 +15,25 @@ function prefetch(w: WorkItem) {
 }
 
 export default function WorkCard({ w, onClick }: { w: WorkItem; onClick: () => void }) {
+  // O4 图片懒加载：进入可视范围(rootMargin 200px 预载带)前不发图片请求；首屏仅可见卡片主动加载
+  const cardRef = useRef<HTMLButtonElement>(null)
+  const [inView, setInView] = useState(false)
+  useEffect(() => {
+    if (inView || !cardRef.current) return
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) {
+        setInView(true)
+        io.disconnect()
+      }
+    }, { rootMargin: '200px' })
+    io.observe(cardRef.current)
+    return () => io.disconnect()
+  }, [inView])
+
   return (
-    <button className="work-card" onClick={() => { prefetch(w); onClick() }}>
+    <button ref={cardRef} className="work-card" onClick={() => { prefetch(w); onClick() }}>
       <div className="wc-cover" style={w.coverColor ? { background: w.coverColor } : undefined}>
-        <SmartImage src={w.cover} fallbackIcon={w.kind === 'manga' ? 'book' : 'film'} />
+        <SmartImage src={w.cover} fallbackIcon={w.kind === 'manga' ? 'book' : 'film'} hold={!inView} />
       </div>
       <div className="wc-title">{w.title}</div>
       <div className="wc-meta">

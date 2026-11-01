@@ -20,21 +20,26 @@ interface Props {
   /** 占位/失败时显示的图标名 */
   fallbackIcon?: IconName
   className?: string
+  /** O4 懒加载持有：true 时不渲染 img（不发请求），显示静态色块——进入可视范围后由调用方放开 */
+  hold?: boolean
 }
 
-export default function SmartImage({ src, alt = '', fallbackIcon = 'film', className }: Props) {
+export default function SmartImage({ src, alt = '', fallbackIcon = 'film', className, hold }: Props) {
   const [attempt, setAttempt] = useState(0) // 0=首次, 1=重试1次, 2=放弃
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
   const t0 = useRef(Date.now()) // 阶段2计时：图片开始→完成
 
-  // src 变化时重置状态（卡片复用/详情切换）
+  // src 变化时重置状态（卡片复用/详情切换）；hold 放开时重置图片计时起点
   useEffect(() => {
     setAttempt(0)
     setLoaded(false)
     setFailed(false)
     t0.current = Date.now()
   }, [src])
+  useEffect(() => {
+    if (!hold) t0.current = Date.now()
+  }, [hold])
 
   return (
     <div className="smart-img-wrap">
@@ -42,6 +47,8 @@ export default function SmartImage({ src, alt = '', fallbackIcon = 'film', class
         <div className="smart-img-fallback">
           <Icon name={fallbackIcon} size={26} />
         </div>
+      ) : hold ? (
+        <div className="smart-img-hold" />
       ) : (
         <>
           {!loaded && <div className="smart-img-ph" />}

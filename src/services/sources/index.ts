@@ -2,6 +2,7 @@
 import type { SourceAdapter, WorkItem } from './types'
 import { normalizeCover } from '../../utils/cover'
 import { perf } from '../perf'
+import { isHomeSkipped, recordHomeSuccess, recordHomeFailure } from './health'
 import anilist from './anilist'
 import jikan from './jikan'
 import bilibili from './bilibili'
@@ -61,21 +62,31 @@ function finish(items: WorkItem[]): WorkItem[] {
  * 首页快源（AniList/B站 1~2s）先渲染，慢源（MangaDex）后到渐进补入，互不阻塞。
  * 返回各源失败原因（sourceId → 分类）。
  */
+export interface StreamOptions { skipUnhealthy?: boolean }
+
 export async function searchAllStream(
   opts: { kw?: string; kind: WorkItem['kind']; genre?: string; sort?: string; page?: number },
   onBatch: (batch: WorkItem[], sourceId: string) => void,
+  streamOpts?: StreamOptions,
 ): Promise<{ failed: Record<string, string> }> {
   const failed: Record<string, string> = {}
   await Promise.allSettled(
     SOURCES.map(async (s) => {
+      // O1 健康记忆：仅首页路径（skipUnhealthy）生效——冷却中的来源直接跳过，不拖累首屏
+      if (streamOpts?.skipUnhealthy && isHomeSkipped(s.id)) {
+        perf({ phase: 'source-skip', sourceId: s.id, status: 'cache-hit', detail: '健康记忆跳过' })
+        return
+      }
       const t0 = Date.now() // 阶段2性能计时：每源独立（开始/结束/耗时/成败）
       try {
         const r = await withTimeout(s.search(opts), 8000)
         perf({ phase: 'source-request', sourceId: s.id, status: 'ok', ms: Date.now() - t0, detail: `${r.items.length}条` })
+        if (streamOpts?.skipUnhealthy) recordHomeSuccess(s.id) // O1: 成功立即清零
         if (r.items.length) onBatch(finish(r.items), s.id)
       } catch (e) {
         const kind = classifyError(e)
         perf({ phase: 'source-request', sourceId: s.id, status: 'fail', ms: Date.now() - t0, detail: kind })
+        if (streamOpts?.skipUnhealthy) recordHomeFailure(s.id, kind) // O1: 记录失败（取消不计——无取消路径即天然满足）
         failed[s.id] = kind
       }
     }),
