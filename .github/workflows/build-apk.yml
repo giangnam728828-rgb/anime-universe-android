@@ -137,7 +137,7 @@ jobs:
           )
           s = s.replace(
               "classpath 'com.android.tools.build:gradle:8.7.3'",
-              "classpath 'com.android.tools.build:gradle:8.7.3'\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'",
+              "classpath 'com.android.tools.build:gradle:8.7.3'\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21'",
               1,
           )
           p.write_text(s, encoding='utf-8')
