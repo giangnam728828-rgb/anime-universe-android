@@ -54,6 +54,33 @@ export function createSessionGuard(isAlive: () => boolean) {
   }
 }
 
+/**
+ * 切换搜索范围的纯决策逻辑（导出以便单元测试；与 React 无关）。
+ *
+ * 规则（阶段3第4步，与 toggleSource 同构）：
+ *  - 重复点击当前范围 → no-op，不发请求
+ *  - 真正切换 + 有关键词 → 清防抖后立即按新范围重搜（runNow 内部负责逻辑取消旧会话）
+ *  - 真正切换 + 无关键词 → 只更新界面状态，不发请求
+ *
+ * 通过依赖注入（setScopeState/clearDebounce/runNow）便于测试，调用顺序固定为
+ * 「先置状态 → 清防抖 → 视关键词决定是否重搜」。
+ */
+export function applyScopeChange(args: {
+  prev: Scope
+  next: Scope
+  keyword: string
+  setScopeState: (s: Scope) => void
+  clearDebounce: () => void
+  runNow: (kw: string, sc: Scope) => void
+}): void {
+  const { prev, next, keyword, setScopeState, clearDebounce, runNow } = args
+  if (next === prev) return // 重复点击当前范围：no-op
+  setScopeState(next)
+  clearDebounce()
+  if (keyword.trim()) runNow(keyword, next)
+  // 无关键词：只更新界面，不发空请求
+}
+
 function readEnabledMap(): Record<string, boolean> {
   const m: Record<string, boolean> = {}
   for (const s of SOURCES) m[s.id] = isSourceEnabled(s.id)
@@ -278,7 +305,20 @@ export function useSearchController(): SearchController {
     [clearDebounce, runNow],
   )
 
-  const setScope = useCallback((s: Scope) => setScopeState(s), [])
+  // ★ 阶段3第4步：切换搜索范围 = 改变搜索条件，行为与切换来源同构（有词立即重搜，无词只改界面）
+  //   不涉及来源设置持久化；资讯请求/解析/过滤规则不变，切到 news 仅改变范围
+  const setScope = useCallback(
+    (s: Scope) =>
+      applyScopeChange({
+        prev: scope,
+        next: s,
+        keyword: q,
+        setScopeState,
+        clearDebounce,
+        runNow,
+      }),
+    [scope, q, runNow, clearDebounce],
+  )
 
   const toggleSource = useCallback(
     (id: string) => {
