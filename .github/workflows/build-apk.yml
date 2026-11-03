@@ -128,9 +128,16 @@ jobs:
               print('已注入，跳过')
               raise SystemExit(0)
           # 在 buildscript.dependencies 中加入 kotlin plugin classpath
+          # ★ Media3 1.11.1 要求 minCompileSdk=36；AGP 8.2.1 最高支持 34
+          #   故升级 AGP 8.2.1 -> 8.7.3（支持 compileSdk 36）
+          s = re.sub(
+              r"classpath 'com\.android\.tools\.build:gradle:[0-9.]+'",
+              "classpath 'com.android.tools.build:gradle:8.7.3'",
+              s,
+          )
           s = s.replace(
-              "classpath 'com.android.tools.build:gradle:8.2.1'",
-              "classpath 'com.android.tools.build:gradle:8.2.1'\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'",
+              "classpath 'com.android.tools.build:gradle:8.7.3'",
+              "classpath 'com.android.tools.build:gradle:8.7.3'\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'",
               1,
           )
           p.write_text(s, encoding='utf-8')
@@ -174,16 +181,26 @@ jobs:
           p = pathlib.Path('android/variables.gradle')
           s = p.read_text(encoding='utf-8')
           s2 = re.sub(r'minSdkVersion\s*=\s*22', 'minSdkVersion = 23', s)
+          # ★ Media3 1.11.1 AAR 元数据要求 minCompileSdk=36
+          s2 = re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', s2)
+          s2 = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', s2)
           p.write_text(s2, encoding='utf-8')
-          print('✅ minSdkVersion 22 -> 23' if s2 != s else '⚠️ minSdk 未变化，检查模板')
+          print('✅ minSdk 22->23, compileSdk/targetSdk -> 36')
           PYEOF
-          grep -n "minSdkVersion" android/variables.gradle
+          grep -nE "minSdkVersion|compileSdkVersion|targetSdkVersion" android/variables.gradle
+
+      - name: Upgrade Gradle wrapper for AGP 8.7
+        run: |
+          cd android
+          # AGP 8.7.3 需要 Gradle 8.9+
+          sed -i 's|gradle-8.2.1-all.zip|gradle-8.9-all.zip|' gradle/wrapper/gradle-wrapper.properties
+          grep distributionUrl gradle/wrapper/gradle-wrapper.properties
 
       - name: Build Release APK (fixed signature)
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease --no-daemon
 
 
       # ★ 播放专项阶段1 · A4 验证(2)：原生构建产物验证

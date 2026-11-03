@@ -16,13 +16,14 @@ apply plugin: 'kotlin-android'
 
 android {
     namespace 'com.giangnam728828.anime.universe.player'
-    compileSdk 34
+    // ★ Media3 1.11.1 AAR 元数据要求 minCompileSdk=36
+    compileSdk 36
 
     defaultConfig {
         // ★ 用户 A1 裁定：minSdk 22 → 23（Media3 1.11.1 AAR 要求 minSdkVersion=23）
         //   影响：Android 5.1(API22) 及以下设备无法安装；API23(Android 6.0) 起支持
         minSdk 23
-        targetSdk 34
+        targetSdk 36
     }
 
     compileOptions {
