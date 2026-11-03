@@ -206,7 +206,7 @@ function normalizeWorkItem(item: WorkItem): WorkItem {
     chapters: normalizeOptional(item.chapters),
     favorites: normalizeOptional(item.favorites),
   })
-  return out as WorkItem
+  return out as unknown as WorkItem
 }
 
 export { normalizeWorkItem }
