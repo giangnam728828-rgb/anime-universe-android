@@ -3,11 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import { getSearchHistory, addSearchHistory, dbClear, type SearchHistoryItem } from '../../database/db'
-import { SOURCES, dedup, type WorkItem, type Kind } from '../../services/sources'
-import { fetchNews, type NewsItem } from '../../services/news'
+import { SOURCES, SOURCE_NAMES, type WorkItem } from '../../services/sources'
 import { NewsRow } from '../news/NewsPage'
+import { useSearchController, type Scope } from './useSearchController'
 
-type Scope = 'all' | 'anime' | 'manga' | 'news'
 const SCOPES: { id: Scope; label: string }[] = [
   { id: 'all', label: '全部' },
   { id: 'anime', label: '动漫' },
@@ -17,103 +16,94 @@ const SCOPES: { id: Scope; label: string }[] = [
 
 export default function SearchPage() {
   const nav = useNavigate()
-  const [q, setQ] = useState('')
-  const [scope, setScope] = useState<Scope>('all')
-  const [results, setResults] = useState<WorkItem[]>([])
-  const [newsResults, setNewsResults] = useState<NewsItem[]>([])
-  const [sourcesDone, setSourcesDone] = useState(0) // 已返回的源数（流式渲染）
-  const [sourcesTotal, setSourcesTotal] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>()
-  const [searched, setSearched] = useState('')
+  const c = useSearchController()
   const [history, setHistory] = useState<SearchHistoryItem[]>([])
 
   const load = useCallback(() => { getSearchHistory().then(setHistory) }, [])
   useEffect(() => { load() }, [load])
 
-  /** 流式渲染：每个源独立返回先到先显示，组内跨源去重 */
-  const run = async (kw: string, sc: Scope) => {
-    const key = kw.trim()
-    if (!key) return
-    setLoading(true)
-    setError(undefined)
-    setResults([])
-    setNewsResults([])
-    setSourcesDone(0)
-    setSearched(key)
-
-    const merge = (items: WorkItem[]) =>
-      setResults((prev) => dedup([...prev, ...items]))
-    const jobs: Promise<void>[] = []
-
-    const kinds: Kind[] = sc === 'all' ? ['anime', 'manga'] : [sc as Kind]
-    if (sc === 'all' || sc === 'anime' || sc === 'manga') {
-      setSourcesTotal(SOURCES.length * kinds.length)
-      SOURCES.forEach((src) => {
-        kinds.forEach((k) => {
-          jobs.push(
-            src.search({ kw: key, kind: k, page: 1 })
-              .then((r) => { merge(r.items); setSourcesDone((d) => d + 1) })
-              .catch(() => { setSourcesDone((d) => d + 1) }),
-          )
-        })
-      })
-    }
-    if (sc === 'all' || sc === 'news') {
-      jobs.push(
-        fetchNews()
-          .then((r) => {
-            const k = key.toLowerCase()
-            const hits = r.items.filter((n) => n.title.toLowerCase().includes(k))
-            setNewsResults(hits.slice(0, 10))
-            setSourcesDone((d) => d + 1)
-          })
-          .catch(() => { setSourcesDone((d) => d + 1) }),
-      )
-      if (sc === 'news') setSourcesTotal(1)
-      else setSourcesTotal((t) => t + 1)
-    }
-
-    await Promise.allSettled(jobs)
-    setLoading(false)
-    await addSearchHistory(key)
-    load()
-  }
-
-  const doSearch = (text?: string, kind?: Scope) => {
-    const kw = (text ?? q).trim()
+  const doSearch = (text?: string, sc?: Scope) => {
+    const kw = (text ?? c.q).trim()
     if (!kw) return
-    setQ(kw)
-    if (kind) setScope(kind)
-    run(kw, kind ?? scope)
+    if (sc) c.setScope(sc)
+    c.runNow(kw, sc ?? c.scope)
+    void addSearchHistory(kw).then(load)
   }
 
-  const openDetail = (w: WorkItem) => nav(`/detail/${w.sourceId}/${w.kind}/${w.workId}`)
+  /** 点击聚合组：进入首来源的现有详情页（aggId 不是作品 ID） */
+  const openDetail = (g: { entries: { sourceId: string; kind: string; workId: string }[] }) => {
+    const first = g.entries[0]
+    if (!first) return
+    nav(`/detail/${first.sourceId}/${first.kind}/${first.workId}`)
+  }
 
-  const groups: { label: string; items: WorkItem[] }[] = [
-    { label: '动漫', items: results.filter((r) => r.kind === 'anime') },
-    { label: '漫画', items: results.filter((r) => r.kind === 'manga') },
-  ]
-  const shownGroups = scope === 'all' ? groups : scope === 'news' ? [] : groups
+  /** 多来源展示：按 SOURCE_ORDER 前两个 + 剩余数 */
+  const sourceLabel = (g: { entries: { sourceId: string }[] }) => {
+    const names = g.entries.map((e) => SOURCE_NAMES[e.sourceId] ?? e.sourceId)
+    if (names.length <= 2) return names.join('、')
+    return `${names.slice(0, 2).join('、')} +${names.length - 2}`
+  }
+
+  const animeGroups = c.workGroups.filter((k) => k.group.kind === 'anime')
+  const mangaGroups = c.workGroups.filter((k) => k.group.kind === 'manga')
+  const shownGroups =
+    c.scope === 'news'
+      ? []
+      : c.scope === 'all'
+        ? [{ label: '动漫', items: animeGroups }, { label: '漫画', items: mangaGroups }]
+        : c.scope === 'anime'
+          ? [{ label: '动漫', items: animeGroups }]
+          : [{ label: '漫画', items: mangaGroups }]
+
+  const enabledCount = SOURCES.filter((s) => c.enabledMap[s.id]).length
 
   return (
     <>
       <header className="page-head">
         <h1>搜索</h1>
-        <p>一次搜索：动漫 · 漫画 · 资讯（AniList + MyAnimeList）</p>
+        <p>一次搜索：动漫 · 漫画 · 资讯 · 多来源聚合</p>
       </header>
 
       <div className="search-bar">
-        <input placeholder="输入作品或资讯关键词…" value={q} onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && doSearch()} />
+        <input
+          placeholder="输入作品或资讯关键词…"
+          value={c.q}
+          onChange={(e) => c.setQ(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && doSearch()}
+        />
         <button className="go" onClick={() => doSearch()}>搜索</button>
       </div>
 
       <Section title="搜索范围">
         <div className="chips">
-          {SCOPES.map((s) => <Chip key={s.id} on={scope === s.id} onClick={() => setScope(s.id)}>{s.label}</Chip>)}
+          {SCOPES.map((s) => (
+            <Chip key={s.id} on={c.scope === s.id} onClick={() => c.setScope(s.id)}>{s.label}</Chip>
+          ))}
         </div>
       </Section>
+
+      <Section title={`来源（${enabledCount}/${SOURCES.length}）`} extra="点击切换，立即生效">
+        <div className="chips">
+          {SOURCES.map((s) => (
+            <Chip key={s.id} on={!!c.enabledMap[s.id]} onClick={() => c.toggleSource(s.id)}>
+              {SOURCE_NAMES[s.id] ?? s.id}
+            </Chip>
+          ))}
+        </div>
+      </Section>
+
+      {c.pipelineError && (
+        <div
+          style={{
+            margin: '8px 0', padding: '8px 12px', borderRadius: 8,
+            background: 'var(--surface-2, #22262e)', color: 'var(--warn, #e0a040)', fontSize: 12,
+            display: 'flex', justifyContent: 'space-between', gap: 8,
+          }}
+        >
+          <span>{c.pipelineError}</span>
+          <button onClick={c.clearPipelineError} style={{ color: 'var(--muted)' }}>关闭</button>
+        </div>
+      )}
 
       {history.length > 0 && (
         <Section title="搜索历史" extra={
@@ -124,42 +114,46 @@ export default function SearchPage() {
         </Section>
       )}
 
-      {loading && results.length === 0 && newsResults.length === 0 && (
-        <Loading text={sourcesTotal > 0 ? `正在搜索（${sourcesDone}/${sourcesTotal} 个来源完成）…` : '正在搜索…'} />
+      {c.workLoading && c.workGroups.length === 0 && c.newsResults.length === 0 && (
+        <Loading text={c.workTotal > 0 ? `正在搜索（${c.workDone}/${c.workTotal} 个来源完成）…` : '正在搜索…'} />
       )}
 
-      {error && (
-        <EmptyState icon="info" title="搜索失败" desc={error} actionText="重试" onAction={() => doSearch(searched || q)} />
+      {Object.keys(c.workFailed).length > 0 && (
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0' }}>
+          部分来源未返回：{Object.entries(c.workFailed).map(([id, r]) => `${SOURCE_NAMES[id] ?? id}（${r}）`).join('、')}
+        </div>
       )}
 
-      {/* 动漫 / 漫画分组结果 */}
       {shownGroups.map((g) => g.items.length > 0 && (
         <Section key={g.label} title={`${g.label}（${g.items.length}）`} extra="点击查看详情">
           <div className="work-grid">
-            {g.items.map((w) => <WorkCard key={w.sourceId + w.kind + w.workId} w={w} onClick={() => openDetail(w)} />)}
+            {g.items.map((k) => (
+              <div key={k.uiKey}>
+                <WorkCard w={k.group.entries[0].item as WorkItem} onClick={() => openDetail(k.group)} />
+                <div style={{ fontSize: 10.5, color: 'var(--muted)', textAlign: 'center', marginTop: 2 }}>
+                  {sourceLabel(k.group)}
+                </div>
+              </div>
+            ))}
           </div>
-          {scope === 'all' && g.items.length >= 12 && (
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>仅显示匹配前部结果 · 切到「{g.label}」范围看更多</div>
-          )}
         </Section>
       ))}
 
-      {/* 资讯分组结果 */}
-      {(scope === 'all' || scope === 'news') && newsResults.length > 0 && (
-        <Section title={`资讯（${newsResults.length}）`} extra="近期新闻标题匹配">
+      {(c.scope === 'all' || c.scope === 'news') && c.newsResults.length > 0 && (
+        <Section title={`资讯（${c.newsResults.length}）`} extra="近期新闻标题匹配">
           <div className="news-list">
-            {newsResults.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}
+            {c.newsResults.map((n) => <NewsRow key={n.id} n={n} nav={nav} />)}
           </div>
         </Section>
       )}
 
-      {!loading && searched && results.length === 0 && newsResults.length === 0 && (
-        <EmptyState icon="search" title={`没有找到「${searched}」`} desc="换个关键词、或切换搜索范围试试。" />
+      {!c.workLoading && c.searched && c.workGroups.length === 0 && c.newsResults.length === 0 && (
+        <EmptyState icon="search" title={`没有找到「${c.searched}」`} desc="换个关键词、或切换搜索范围试试。" />
       )}
 
-      {!loading && !searched && (
+      {!c.workLoading && !c.searched && (
         <EmptyState icon="search" title="输入关键词开始搜索"
-          desc={'默认搜索全部：动漫 + 漫画 + 资讯\n支持英文、罗马音、日文原名\n结果多来源聚合去重（AniList / MyAnimeList）'} />
+          desc={'默认搜索全部：动漫 + 漫画 + 资讯\n支持英文、罗马音、日文原名\n结果多来源聚合（同源去重 + 跨源合并）'} />
       )}
     </>
   )
