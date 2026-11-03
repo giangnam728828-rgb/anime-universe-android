@@ -4,4 +4,4 @@ dist/
 *.p12
 *.keystore
 keystore.backup/
-android/
+/android/
