@@ -181,7 +181,16 @@ function normalizeOptional<T extends string | number | undefined>(
 /** 规范化 18 字段中的可选字段（sourceId/workId/kind/title/genres 为必填，不参与） */
 function normalizeWorkItem(item: WorkItem): WorkItem {
   // ★ 未知字段原样保留（设计 §4.8 / §9 v2 迁移策略「只加字段不删字段，未知字段原样保留」）。
-  //    先拷贝全部自有键，再用规范化后的已知字段覆盖，避免扩展字段被静默丢弃。
+  //    先拷贝全部自有可枚举键，再用规范化后的已知字段覆盖，避免扩展字段被静默丢弃。
+  //
+  // ★ 冻结边界契约（v1.11 明确，勿误读为"完整深冻结"）：
+  //    - `{ ...item }` 是**浅拷贝**：只复制顶层自有可枚举属性，未知字段值仍与入参共享引用。
+  //    - 未知字段的嵌套对象/嵌套数组**不做递归冻结**，也不会被 structuredClone 深拷贝。
+  //    - 若调用方在传入后修改 `item.extension.inner`，SourceEntry.item.extension.inner 会同步变化。
+  //    - 这不影响排序确定性：未知字段不参与 compareRecord / byFixedKey 的任何比较（见 §3.2），
+  //      而参与比较的 18 个字段中唯一的引用类型 genres 已由 freezeWorkItem 单独冻结。
+  //    - 设计 §3.2 同时规定：WorkItem 若未来新增对象字段，必须先在设计文档登记比较规则，
+  //      届时需一并重新评估冻结边界。
   const out: Record<string, unknown> = { ...item }
   Object.assign(out, {
     sourceId: item.sourceId,
@@ -211,7 +220,17 @@ function normalizeWorkItem(item: WorkItem): WorkItem {
 
 export { normalizeWorkItem }
 
-/** 深冻结 WorkItem：顶层 + genres 数组（当前结构下仅 genres 是嵌套引用） */
+/**
+ * 冻结 WorkItem。
+ *
+ * ★ 冻结范围（v1.11 明确，设计 §4.8「深冻结（顶层 + genres 数组）」）：
+ *    - 冻结**顶层对象**（禁止增删改属性）
+ *    - 冻结 **genres 数组**（禁止 push/splice 等原地修改，否则会改变比较结果）
+ *    - **不**递归冻结其他任何嵌套结构；未知字段若携带嵌套对象，其内部仍可变
+ *
+ * 之所以只做到"顶层 + genres"：比较只读取 18 个字段，其中唯一引用类型是 genres。
+ * 冻结目的是"尽早暴露下游意外写入导致的排序不稳定"，而非对任意扩展数据做不可变性保证。
+ */
 export function freezeWorkItem(item: WorkItem): Readonly<WorkItem> {
   const copy: WorkItem = { ...item }
   if (Array.isArray(copy.genres)) {
@@ -257,9 +276,9 @@ export type RejectReporter = (sourceId: string, reason: string) => void
 /** 警告回调类型：未知字段等非致命问题（设计 §4.8：只警告不拒绝） */
 export type WarnReporter = (message: string) => void
 
-/** 默认警告实现：开发/诊断可见，生产静默（设计 §4.8 已知局限 R21） */
+/** 默认警告实现：仅开发/诊断可见，生产环境静默（设计 §4.8 / 风险 R21） */
 const defaultWarn: WarnReporter = (msg) => {
-  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+  if (import.meta.env.DEV) {
     console.warn(`[sources/entry] ${msg}`)
   }
 }
