@@ -11,7 +11,7 @@
  *  - 空关键词处理
  *  - 每批次全量聚合：dedupWithinSource → aggregate → uiKey 分配
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   searchAllStream,
   SOURCES,
@@ -22,9 +22,22 @@ import {
   type SettleReason,
   type PipelineErrorReporter,
 } from '../../services/sources'
-import { toSourceEntry, dedupWithinSource, aggregate, type SourceEntry } from '../../services/sources/aggregate'
-import { createUiKeyMapper, type KeyedGroup } from './uiKeyMap'
+import type { KeyedGroup } from './uiKeyMap'
 import { fetchNews, type NewsItem } from '../../services/news'
+import {
+  subscribe,
+  getSnapshot,
+  currentWorkSeq,
+  currentNewsSeq,
+  beginWorkSession,
+  beginNewsSession,
+  finishNewsSuccess,
+  finishNewsFailure,
+  invalidateAllSessions,
+  clearEmptySearch,
+  commitWorkBatch,
+  patchSnapshot,
+} from './searchStore'
 
 export type Scope = 'all' | 'anime' | 'manga' | 'news'
 
@@ -112,35 +125,33 @@ export interface SearchController {
   toggleSource: (id: string) => void
   // 操作
   runNow: (kw?: string, sc?: Scope) => void
+  // ★ 阶段3第7步：中断会话提示与「重新搜索」
+  /** 上次搜索未完成（页面离开导致中断），当前显示的是部分结果 */
+  isIncomplete: boolean
+  /** 按当前关键词 + 当前范围 + 最新来源开关重新发起搜索（不承诺断点续跑） */
+  onResearch: () => void
 }
 
 export function useSearchController(): SearchController {
-  const [q, setQState] = useState('')
-  const [scope, setScopeState] = useState<Scope>('all')
-  const [searched, setSearched] = useState('')
+  // ★ 阶段3第7步：除 q 的输入框草稿与来源开关外，全部可见状态来自模块级快照
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const q = snap.q
+  const scope = snap.scope
+  const searched = snap.searched
+  const workGroups = snap.workGroups as KeyedGroup[]
+  const workLoading = snap.workLoading
+  const workDone = snap.workDone
+  const workTotal = snap.workTotal
+  const workFailed = snap.workFailed as Record<string, string>
+  const newsResults = snap.newsResults as NewsItem[]
+  const newsLoading = snap.newsLoading
+  const newsError = snap.newsError
+  const pipelineError = snap.pipelineError
 
-  const [workGroups, setWorkGroups] = useState<KeyedGroup[]>([])
-  const [workLoading, setWorkLoading] = useState(false)
-  const [workDone, setWorkDone] = useState(0)
-  const [workTotal, setWorkTotal] = useState(0)
-  const [workFailed, setWorkFailed] = useState<Record<string, string>>({})
-  const workTotalRef = useRef(0)
-
-  const [newsResults, setNewsResults] = useState<NewsItem[]>([])
-  const [newsLoading, setNewsLoading] = useState(false)
-  const [newsError, setNewsError] = useState<string>()
-
-  const [pipelineError, setPipelineError] = useState<string>()
   const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>(readEnabledMap)
 
-  const workSeqRef = useRef(0)
-  const newsSeqRef = useRef(0)
   const ctrlRef = useRef<AbortController | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // 会话级累积与身份映射（跨批次、跨渲染保持）
-  const entriesRef = useRef<SourceEntry[]>([])
-  const keyMapperRef = useRef(createUiKeyMapper())
 
   const clearDebounce = useCallback(() => {
     if (debounceRef.current !== null) {
@@ -149,19 +160,16 @@ export function useSearchController(): SearchController {
     }
   }, [])
 
-  /** 开始新搜索会话：作废上一会话（逻辑取消，不停止底层 HTTP） */
+  /**
+   * 开始新搜索会话：作废上一会话（逻辑取消，不停止底层 HTTP）。
+   * store 侧一次性完成：推进序号 → 重置作品运行时 → 清 pipelineError → emit。
+   */
   const startSession = useCallback(() => {
     ctrlRef.current?.abort()
     const ctrl = new AbortController()
     ctrlRef.current = ctrl
-    workSeqRef.current += 1
-    entriesRef.current = []
-    keyMapperRef.current.reset()
-    setWorkGroups([])
-    setWorkDone(0)
-    setWorkFailed({})
-    setWorkLoading(true)
-    return { mySeq: workSeqRef.current, ctrl }
+    const mySeq = beginWorkSession({ loading: true })
+    return { mySeq, ctrl }
   }, [])
 
   const runNow = useCallback(
@@ -171,33 +179,22 @@ export function useSearchController(): SearchController {
       clearDebounce()
 
       if (!kw) {
-        // 空关键词：作废会话 + 清空作品，资讯保留但终结 loading
+        // 空关键词：作废双会话 + 清空作品运行时；资讯结果保留（store 内一次 emit）
         ctrlRef.current?.abort()
-        workSeqRef.current += 1
-        entriesRef.current = []
-        keyMapperRef.current.reset()
-        setWorkGroups([])
-        setWorkDone(0)
-        setWorkTotal(0)
-        workTotalRef.current = 0
-        setWorkFailed({})
-        setWorkLoading(false)
-        setSearched('')
-        newsSeqRef.current += 1
-        setNewsLoading(false)
-        setNewsError(undefined)
+        ctrlRef.current = null
+        clearEmptySearch()
         return
       }
 
       const { mySeq, ctrl } = startSession()
-      setSearched(kw)
+      patchSnapshot({ searched: kw, q: kw })
 
       // 每次真正执行搜索前重读来源设置（跨页面同步方案 i）
       const freshEnabled = readEnabledMap()
       setEnabledMap(freshEnabled)
       const enabledSources = SOURCES.filter((s) => freshEnabled[s.id])
 
-      const isAlive = () => mySeq === workSeqRef.current && !ctrl.signal.aborted
+      const isAlive = () => mySeq === currentWorkSeq() && !ctrl.signal.aborted
       const commit = (fn: () => void) => {
         if (isAlive()) fn()
       }
@@ -209,19 +206,23 @@ export function useSearchController(): SearchController {
         // 来源层在逻辑取消时根本不调用 onSettle，因此 reason 不会为 cancelled
         if (!guard.trySettle(sourceId)) return
         commit(() => {
-          setWorkDone((d) => Math.min(d + 1, workTotalRef.current))
-          if (reason !== 'ok') setWorkFailed((p) => ({ ...p, [sourceId]: reason }))
+          const cur = getSnapshot()
+          patchSnapshot({
+            workDone: Math.min(cur.workDone + 1, cur.workTotal),
+            workFailed: reason === 'ok' ? cur.workFailed : { ...cur.workFailed, [sourceId]: reason },
+          })
         })
       }
 
       const handlePipelineError: PipelineErrorReporter = (stage, sourceId, err) => {
         console.error(`[pipeline:${stage}] ${sourceId}`, err)
         commit(() =>
-          setPipelineError(
-            stage === 'onBatch'
-              ? `结果聚合异常（${sourceId}）：${(err as Error)?.message ?? '未知'}`
-              : `进度回调异常（${sourceId}）`,
-          ),
+          patchSnapshot({
+            pipelineError:
+              stage === 'onBatch'
+                ? `结果聚合异常（${sourceId}）：${(err as Error)?.message ?? '未知'}`
+                : `进度回调异常（${sourceId}）`,
+          }),
         )
       }
 
@@ -230,21 +231,18 @@ export function useSearchController(): SearchController {
       // —— 作品搜索 ——
       if (kinds.length > 0) {
         const total = enabledSources.length * kinds.length
-        setWorkTotal(total)
-        workTotalRef.current = total
+        patchSnapshot({ workTotal: total })
 
+        /**
+         * 批次提交：外层 isAlive（含 abort 判定）+ store 内层序号校验，双层守卫。
+         * 实际的累积 / 去重 / 聚合 / uiKey 分配全部收敛到 store 的单一写入口。
+         */
         const onBatch = (batch: WorkItem[]) => {
           if (!isAlive()) return
-          for (const w of batch) {
-            const e = toSourceEntry(w, undefined, () => {})
-            if (e) entriesRef.current.push(e)
+          const r = commitWorkBatch(mySeq, batch)
+          if (!r.ok && r.reason === 'failed') {
+            // store 已写入 pipelineError 并重建 mapper + 推进 epoch，此处不重复上报
           }
-          // 全量重算：同源去重 → 跨源聚合 → UI key
-          const deduped = dedupWithinSource(entriesRef.current)
-          const groups = aggregate(deduped.map((e) => e.item))
-          const keyed = keyMapperRef.current.assign(groups)
-          if (!isAlive()) return // 计算期间可能已过期
-          commit(() => setWorkGroups(keyed))
         }
 
         void Promise.allSettled(
@@ -258,30 +256,26 @@ export function useSearchController(): SearchController {
             }),
           ),
         ).then(() => {
-          commit(() => setWorkLoading(false))
+          commit(() => patchSnapshot({ workLoading: false }))
         })
       } else {
-        setWorkTotal(0)
-        workTotalRef.current = 0
-        setWorkLoading(false)
+        patchSnapshot({ workTotal: 0, workLoading: false })
       }
 
       // —— 资讯搜索（独立 seq，不参与 abort；请求/解析/过滤逻辑不变） ——
       if (sc === 'all' || sc === 'news') {
-        const myNewsSeq = ++newsSeqRef.current
-        setNewsLoading(true)
+        const myNewsSeq = beginNewsSession()
         fetchNews()
           .then((r) => {
-            if (myNewsSeq !== newsSeqRef.current) return
+            if (myNewsSeq !== currentNewsSeq()) return
             const k = kw.toLowerCase()
             const hits = r.items.filter((n) => n.title.toLowerCase().includes(k))
-            setNewsResults(hits.slice(0, 10))
-            setNewsLoading(false)
+            // 阶段3第7步行为变更：成功时同时清除旧 newsError
+            finishNewsSuccess(hits.slice(0, 10))
           })
           .catch(() => {
-            if (myNewsSeq !== newsSeqRef.current) return
-            setNewsError('资讯加载失败')
-            setNewsLoading(false)
+            if (myNewsSeq !== currentNewsSeq()) return
+            finishNewsFailure('资讯加载失败')
           })
       }
     },
@@ -290,7 +284,7 @@ export function useSearchController(): SearchController {
 
   const setQ = useCallback(
     (v: string) => {
-      setQState(v)
+      patchSnapshot({ q: v })
       clearDebounce()
       if (!v.trim()) {
         // 空关键词：立即走空处理路径（作废旧结果提交）
@@ -313,7 +307,7 @@ export function useSearchController(): SearchController {
         prev: scope,
         next: s,
         keyword: q,
-        setScopeState,
+        setScopeState: (ns) => patchSnapshot({ scope: ns }),
         clearDebounce,
         runNow,
       }),
@@ -341,13 +335,37 @@ export function useSearchController(): SearchController {
     return () => document.removeEventListener('visibilitychange', onVis)
   }, [])
 
-  // 卸载：清除定时器并作废会话
+  /**
+   * 卸载（阶段3第7步）：清除定时器、作废双会话、两个 loading 归 false。
+   * ★ 保留结果 / 关键词 / 范围 / 错误，返回时直接恢复，不自动重发请求。
+   * ★ 两个序号同时前进：恢复模式下不重发，若序号不前进，
+   *   离开期间仍在执行的旧请求返回时会被误判为"当前会话"而污染恢复后的快照。
+   */
   useEffect(() => {
     return () => {
       clearDebounce()
       ctrlRef.current?.abort()
+      ctrlRef.current = null
+      invalidateAllSessions()
     }
   }, [clearDebounce])
+
+  /**
+   * 未完成判定（阶段3第7步）：
+   *  - workTotal === 0：没有可搜索的源，不显示（边界①）
+   *  - workDone === workTotal 但 workFailed 非空：属"全部完成但有来源失败"，走既有来源错误提示（边界②）
+   */
+  const isIncomplete =
+    workLoading === false &&
+    workTotal > 0 &&
+    workDone < workTotal &&
+    searched.trim() !== ''
+
+  /** 重新搜索：当前关键词 + 当前范围；runNow 内部会重读来源开关并新建双会话 */
+  const onResearch = useCallback(() => {
+    if (!searched.trim()) return
+    runNow(searched, scope)
+  }, [runNow, searched, scope])
 
   return {
     q,
@@ -364,9 +382,11 @@ export function useSearchController(): SearchController {
     newsLoading,
     newsError,
     pipelineError,
-    clearPipelineError: () => setPipelineError(undefined),
+    clearPipelineError: () => patchSnapshot({ pipelineError: undefined }),
     enabledMap,
     toggleSource,
     runNow,
+    isIncomplete,
+    onResearch,
   }
 }

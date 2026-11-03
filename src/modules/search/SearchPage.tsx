@@ -110,6 +110,19 @@ export default function SearchPage() {
         </div>
       )}
 
+      {c.isIncomplete && (
+        <div
+          style={{
+            margin: '8px 0', padding: '8px 12px', borderRadius: 8,
+            background: 'var(--surface-2, #22262e)', color: 'var(--info, #6aa9e0)', fontSize: 12,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+          }}
+        >
+          <span>上次搜索未完成，当前显示的是已获取的部分结果。</span>
+          <button onClick={c.onResearch} style={{ color: 'var(--muted)', flexShrink: 0 }}>重新搜索</button>
+        </div>
+      )}
+
       {history.length > 0 && (
         <Section title="搜索历史" extra={
           <button onClick={() => { dbClear('search_history'); setHistory([]) }}
