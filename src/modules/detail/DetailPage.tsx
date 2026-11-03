@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import { Section, EmptyState, Loading, Modal } from '../../components/ui'
 import { useAsync } from '../../hooks/useAsync'
-import { getSource, type Kind, type WorkDetail } from '../../services/sources'
+import { getSource, SOURCE_NAMES, type Kind, type WorkDetail } from '../../services/sources'
 import SourceBadge from '../../components/SourceBadge'
 import SmartImage from '../../components/SmartImage'
 import { isFavorited, toggleFavorite } from '../../database/db'
+import { peek, type RouteIdentity } from './searchSession'
 
 export const favKeyOf = (sourceId: string, kind: string, workId: string) => `${sourceId}-${kind}-${workId}`
 
@@ -24,6 +25,24 @@ export default function DetailPage() {
   )
   const [fav, setFav] = useState(false)
   const [note, setNote] = useState(false)
+
+  // ---- 阶段3-5a：会话上下文（只读，不发起任何反查） ----
+  // 读取路径是纯计算（peek 不修改模块状态），因此不受 StrictMode 双调用影响
+  const location = useLocation()
+  const ctxRoute = useMemo<RouteIdentity>(
+    () => ({ sourceId, kind: kind as Kind, workId }),
+    [sourceId, kind, workId],
+  )
+  const ctxToken = (location.state as { ctx?: string } | null)?.ctx
+  const ctxEntries = useMemo(() => peek(ctxToken, ctxRoute), [ctxToken, ctxRoute])
+  /** 排除当前页自身：必须用三元组比对（同一来源可能有 anime/manga 两条） */
+  const otherEntries = useMemo(
+    () =>
+      ctxEntries?.filter(
+        (e) => !(e.sourceId === sourceId && e.kind === kind && e.workId === workId),
+      ) ?? [],
+    [ctxEntries, sourceId, kind, workId],
+  )
 
   useEffect(() => {
     isFavorited(favKeyOf(sourceId, kind, workId)).then(setFav)
@@ -86,6 +105,27 @@ export default function DetailPage() {
         {d.favorites != null && <div className="info-item"><div className="il">收藏人数</div><div className="iv">{d.favorites.toLocaleString()}</div></div>}
         <div className="info-item"><div className="il">数据来源</div><div className="iv"><SourceBadge sourceId={d.sourceId} /></div></div>
       </div>
+
+      {/* 阶段3-5a：其他来源（纯展示，不可点击；不发起任何反查） */}
+      <Section title="其他来源">
+        {otherEntries.length > 0 ? (
+          <div className="rows">
+            {otherEntries.map((e) => (
+              <div key={`${e.sourceId}\u0000${e.kind}\u0000${e.workId}`} className="row-item" style={{ width: '100%' }}>
+                <span className="rmain">
+                  {/* 标题缺失时退回来源名称，绝不借用其他来源的标题 */}
+                  <div className="rtitle">{e.title.trim() || (SOURCE_NAMES[e.sourceId] ?? e.sourceId)}</div>
+                  <div className="rdesc"><SourceBadge sourceId={e.sourceId} /></div>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            {ctxEntries ? '该作品暂无其他来源' : '暂无其他来源信息'}
+          </div>
+        )}
+      </Section>
 
       {d.genres.length > 0 && (
         <Section title="分类">

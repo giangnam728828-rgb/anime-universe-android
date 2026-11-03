@@ -4,8 +4,10 @@ import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import { getSearchHistory, addSearchHistory, dbClear, type SearchHistoryItem } from '../../database/db'
 import { SOURCES, SOURCE_NAMES, type WorkItem } from '../../services/sources'
+import type { SourceEntry } from '../../services/sources/aggregate'
 import { NewsRow } from '../news/NewsPage'
 import { useSearchController, type Scope } from './useSearchController'
+import { createToken } from '../detail/searchSession'
 
 const SCOPES: { id: Scope; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -31,10 +33,13 @@ export default function SearchPage() {
   }
 
   /** 点击聚合组：进入首来源的现有详情页（aggId 不是作品 ID） */
-  const openDetail = (g: { entries: { sourceId: string; kind: string; workId: string }[] }) => {
+  const openDetail = (g: { entries: SourceEntry[] }) => {
     const first = g.entries[0]
     if (!first) return
-    nav(`/detail/${first.sourceId}/${first.kind}/${first.workId}`)
+    // ★ 不变量：route 与下方 URL 必须来自同一个 first，禁止分别取值
+    const route = { sourceId: first.sourceId, kind: first.kind, workId: first.workId }
+    const token = createToken(g.entries, route)
+    nav(`/detail/${first.sourceId}/${first.kind}/${first.workId}`, { state: { ctx: token } })
   }
 
   /** 多来源展示：按 SOURCE_ORDER 前两个 + 剩余数 */
