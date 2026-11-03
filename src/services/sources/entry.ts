@@ -149,7 +149,9 @@ export function validateWorkItem(it: unknown): string | null {
 }
 
 /**
- * ★ 规范化（v1.9 修复）：可选字段的 null 统一为 undefined。
+ * ★ 规范化（v1.9 修复 / v1.10 收窄范围）：可选字段的 null 统一为 undefined。
+ *
+ * ★ 例外：`year` 不参与规范化（v1.10）。见下方 normalizeWorkItem 内注释。
  *
  * 原因：`strCompare`/`cmpNum` 把 null 与 undefined 视为相等（设计如此，表示"无值"），
  * 但二者在对象上是**可区分的原始值**。若不规范化，两条仅在 null/undefined 上不同的记录
@@ -178,7 +180,10 @@ function normalizeWorkItem(item: WorkItem): WorkItem {
     coverColor: normalizeOptional(item.coverColor),
     description: normalizeOptional(item.description),
     score: normalizeOptional(item.score),
-    year: normalizeOptional(item.year),
+    // ★ v1.10 修复：year **不**规范化。
+    // yearCompare 特意用档位 0(undefined) / 1(null) 区分二者，
+    // 入口若把 null 抹成 undefined，byFixedKey 就永远无法复现该排序语义。
+    year: item.year,
     statusCn: normalizeOptional(item.statusCn),
     formatCn: normalizeOptional(item.formatCn),
     titleLang: normalizeOptional(item.titleLang),
