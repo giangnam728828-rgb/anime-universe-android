@@ -113,10 +113,21 @@ export function typeName(v: unknown): string {
  * 校验一个候选 WorkItem。返回 null 表示通过；返回字符串表示拒绝原因。
  * ★ 不做任何隐式类型转换：title:2 直接拒绝，绝不 String(2)。
  */
-export function validateWorkItem(it: unknown): string | null {
+export function validateWorkItem(it: unknown, warn: WarnReporter = defaultWarn): string | null {
   if (typeof it !== 'object' || it === null || Array.isArray(it)) return 'not-an-object'
   const o = it as Record<string, unknown>
 
+  // 1) 未知字段：★ 只警告不拒绝（向前兼容未来字段，设计 §4.8 / 风险 R21）
+  // ★ 必须用 hasOwnProperty：`k in WORK_ITEM_RULES` 会沿原型链命中
+  //    toString / constructor / __proto__ / valueOf / hasOwnProperty 等内置键，
+  //    导致这些未知字段被静默漏报（v1.8 实测：五个内置键 in 均为 true）
+  for (const k of Object.keys(o)) {
+    if (!Object.prototype.hasOwnProperty.call(WORK_ITEM_RULES, k)) {
+      warn(`unknown field: ${k}`)
+    }
+  }
+
+  // 2) 逐字段类型检查（18 个字段全部覆盖）
   for (const [f, rule] of Object.entries(WORK_ITEM_RULES) as [keyof WorkItem, FieldRule][]) {
     const v = o[f]
     switch (rule) {
@@ -169,7 +180,10 @@ function normalizeOptional<T extends string | number | undefined>(
 
 /** 规范化 18 字段中的可选字段（sourceId/workId/kind/title/genres 为必填，不参与） */
 function normalizeWorkItem(item: WorkItem): WorkItem {
-  return {
+  // ★ 未知字段原样保留（设计 §4.8 / §9 v2 迁移策略「只加字段不删字段，未知字段原样保留」）。
+  //    先拷贝全部自有键，再用规范化后的已知字段覆盖，避免扩展字段被静默丢弃。
+  const out: Record<string, unknown> = { ...item }
+  Object.assign(out, {
     sourceId: item.sourceId,
     workId: item.workId,
     kind: item.kind,
@@ -191,7 +205,8 @@ function normalizeWorkItem(item: WorkItem): WorkItem {
     episodes: normalizeOptional(item.episodes),
     chapters: normalizeOptional(item.chapters),
     favorites: normalizeOptional(item.favorites),
-  } as WorkItem
+  })
+  return out as WorkItem
 }
 
 export { normalizeWorkItem }
@@ -239,12 +254,26 @@ export interface SourceEntry {
 /** 诊断回调类型：非法条目被拒绝时上报（不打点、不抛错，保持纯函数） */
 export type RejectReporter = (sourceId: string, reason: string) => void
 
+/** 警告回调类型：未知字段等非致命问题（设计 §4.8：只警告不拒绝） */
+export type WarnReporter = (message: string) => void
+
+/** 默认警告实现：开发/诊断可见，生产静默（设计 §4.8 已知局限 R21） */
+const defaultWarn: WarnReporter = (msg) => {
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn(`[sources/entry] ${msg}`)
+  }
+}
+
 /**
  * 统一转换：WorkItem → SourceEntry。
  * 校验失败返回 null（由调用方决定是否记录诊断），成功则返回深冻结条目。
  */
-export function toSourceEntry(item: WorkItem, onReject?: RejectReporter): SourceEntry | null {
-  const err = validateWorkItem(item)
+export function toSourceEntry(
+  item: WorkItem,
+  onReject?: RejectReporter,
+  onWarn: WarnReporter = defaultWarn,
+): SourceEntry | null {
+  const err = validateWorkItem(item, onWarn)
   if (err) {
     onReject?.((item as Partial<WorkItem>)?.sourceId ?? 'unknown', err)
     return null

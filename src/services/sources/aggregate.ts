@@ -373,6 +373,7 @@ export {
   toSourceEntry,
   validateWorkItem,
   freezeWorkItem,
+  normalizeWorkItem,
   yearMeaningOf,
   WORK_ITEM_RULES,
   WORK_ITEM_FIELD_LIST,
