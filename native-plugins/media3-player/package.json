@@ -1,0 +1,21 @@
+{
+  "name": "media3-player",
+  "version": "0.1.0",
+  "description": "Media3 ExoPlayer native plugin for 动漫宇宙 (播放专项阶段1)",
+  "main": "src/definitions.ts",
+  "types": "src/definitions.ts",
+  "files": [
+    "src/",
+    "android/"
+  ],
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=6.0.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

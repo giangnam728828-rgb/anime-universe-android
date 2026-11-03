@@ -17,7 +17,8 @@
     "react-router-dom": "^6.26.0",
     "zustand": "^4.5.2",
     "@capacitor/app": "^6.0.0",
-    "@capacitor/browser": "^6.0.0"
+    "@capacitor/browser": "^6.0.0",
+    "media3-player": "file:./native-plugins/media3-player"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.0",

@@ -14,6 +14,8 @@ import PerfPage from './modules/perf/PerfPage'
 import NewsPage from './modules/news/NewsPage'
 import NewsViewPage from './modules/news/NewsViewPage'
 import NewsSourcesPage from './modules/news/NewsSourcesPage'
+// 播放专项阶段1：原生播放器（独立模块，不耦合详情页/搜索模块）
+import PlayerPage from './modules/player/PlayerPage'
 import { useSettings } from './stores/settings'
 
 export default function App() {
@@ -41,6 +43,8 @@ export default function App() {
         <Route path="/news" element={<NewsPage />} />
         <Route path="/newsview/:eid" element={<NewsViewPage />} />
         <Route path="/news-sources" element={<NewsSourcesPage />} />
+        {/* 播放专项阶段1：只承载稳定 ID，不放 URL / Token / 签名参数 */}
+        <Route path="/player/:sourceId/:workId/:episodeId" element={<PlayerPage />} />
       </Routes>
     </HashRouter>
   )
