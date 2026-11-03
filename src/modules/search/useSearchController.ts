@@ -41,8 +41,43 @@ import {
 
 export type Scope = 'all' | 'anime' | 'manga' | 'news'
 
+/**
+ * 修复3：搜索空态语义类型。
+ * - all-failed      单一作品范围内，全部启用来源均已结算且均失败
+ * - partial-failure 有来源失败（含 all 范围，all 永不进 all-failed）
+ * - news-empty      资讯范围，资讯会话完成且当前关键词确实无结果
+ * - no-results      全部成功但结果为空
+ */
+export type EmptyStateType = 'all-failed' | 'partial-failure' | 'news-empty' | 'no-results' | null
+
 const DEBOUNCE_MS = 300
 const SEARCH_TIMEOUT_MS = 6000
+
+/**
+ * 修复3：当前 newsResults 对应的搜索关键词归属。
+ *
+ * ★ 必须是**模块作用域**而非组件 useRef：
+ *   SearchPage 进入详情页会卸载，useRef 随之销毁；而 searchStore 的 newsResults 会保留。
+ *   若用 useRef，返回搜索页后归属丢失，无法判断残留资讯结果是否属于当前关键词。
+ *
+ * ★ 写入时机（见资讯成功回调）：必须在 newsSeq 校验通过之后、且在调用
+ *   finishNewsSuccess **之前**写入 —— 因为 emitSnapshot 会**同步**通知全部订阅者，
+ *   若先提交后写归属，订阅者在通知中读到的仍是旧值。
+ *
+ * ★ 依赖前提：finishNewsSuccess 当前无任何拒绝提交的分支（无条件 emitSnapshot）。
+ *   若将来为其增加拒绝逻辑，此处顺序需重新评估。
+ */
+let newsResultsKw: string | null = null
+
+/** 仅供测试重置模块级资讯归属；业务代码禁止调用。重置不影响 store 的 newsResults。 */
+export function __resetNewsKwForTest(): void {
+  newsResultsKw = null
+}
+
+/** 仅供测试读取模块级资讯归属。 */
+export function __getNewsKwForTest(): string | null {
+  return newsResultsKw
+}
 
 /**
  * 会话级结算守卫（导出以便单元测试；与 React 无关）。
@@ -130,6 +165,8 @@ export interface SearchController {
   isIncomplete: boolean
   /** 按当前关键词 + 当前范围 + 最新来源开关重新发起搜索（不承诺断点续跑） */
   onResearch: () => void
+  // ★ 修复3：空态语义（null 表示非空态）
+  emptyStateType: EmptyStateType
 }
 
 export function useSearchController(): SearchController {
@@ -277,6 +314,9 @@ export function useSearchController(): SearchController {
             if (myNewsSeq !== currentNewsSeq()) return
             const k = kw.toLowerCase()
             const hits = r.items.filter((n) => n.title.toLowerCase().includes(k))
+            // 修复3：★ 先写归属，再提交。emitSnapshot 会同步通知订阅者，
+            // 若顺序颠倒，订阅者在通知中读到的 newsResultsKw 仍是旧值。
+            newsResultsKw = kw
             // 阶段3第7步行为变更：成功时同时清除旧 newsError
             finishNewsSuccess(hits.slice(0, 10))
           })
@@ -368,6 +408,54 @@ export function useSearchController(): SearchController {
     workDone < workTotal &&
     searched.trim() !== ''
 
+  /**
+   * 修复3：空态语义判定。
+   *
+   * S1 all-failed      仅限单一作品范围，且全部启用来源都已结算且均失败
+   * S2 partial-failure 有来源失败，结果为空（含 all 范围，all 永不进 S1）
+   * news-empty         资讯范围，资讯会话完成且当前关键词确实无结果
+   * no-results         全部成功但结果为空
+   * null               非空态（加载中 / 无关键词 / 有结果）
+   */
+  const failedIds = Object.keys(workFailed)
+  const enabledIds = Object.keys(enabledMap).filter((id) => enabledMap[id])
+  const enabledCount = enabledIds.length
+  const failedCount = failedIds.length
+
+  /** 失败来源集合 === 启用来源集合（集合相等，不是数量相等） */
+  const isFailedSetEqualEnabledSet =
+    enabledCount > 0 && enabledCount === failedCount && enabledIds.every((id) => id in workFailed)
+
+  /** 只有单一作品范围才具备 S1 判定基础（每来源恰一条搜索流） */
+  const isSingleWorkScope = scope === 'anime' || scope === 'manga'
+
+  /** 本轮作品搜索是否已完整结算 */
+  const fullySettled = workLoading === false && workTotal > 0 && workDone === workTotal
+
+  /** 当前资讯结果是否属于本次搜索关键词（避免残留旧结果参与判定） */
+  const hasCurrentNewsResults = newsResults.length > 0 && newsResultsKw === searched
+
+  const noWorkResult = workGroups.length === 0
+
+  // —— 资讯范围：资讯会话完成、无错误、归属当前词且确实为空 ——
+  const isNewsEmpty =
+    scope === 'news' &&
+    newsLoading === false &&
+    searched.trim() !== '' &&
+    !newsError &&
+    newsResultsKw === searched &&
+    newsResults.length === 0
+
+  const emptyStateType: EmptyStateType = isNewsEmpty
+    ? 'news-empty'
+    : !fullySettled || searched.trim() === '' || !noWorkResult || hasCurrentNewsResults
+      ? null
+      : isSingleWorkScope && isFailedSetEqualEnabledSet
+        ? 'all-failed'
+        : failedCount > 0
+          ? 'partial-failure'
+          : 'no-results'
+
   /** 重新搜索：当前关键词 + 当前范围；runNow 内部会重读来源开关并新建双会话 */
   const onResearch = useCallback(() => {
     if (!searched.trim()) return
@@ -395,5 +483,6 @@ export function useSearchController(): SearchController {
     runNow,
     isIncomplete,
     onResearch,
+    emptyStateType,
   }
 }

@@ -16,6 +16,18 @@ const SCOPES: { id: Scope; label: string }[] = [
   { id: 'news', label: '资讯' },
 ]
 
+/**
+ * 修复3：all 范围两档文案。
+ * ★ 集合相等时才能说"所有来源均至少出现过一次请求失败"；
+ *   否则只能说"有 N 个来源"，不能夸大。
+ */
+function allFailedCopy(failedCount: number, enabledCount: number): string {
+  if (enabledCount > 0 && failedCount === enabledCount) {
+    return '所有来源均至少出现过一次请求失败，但部分搜索流可能成功并返回空结果。建议重新搜索。'
+  }
+  return `有 ${failedCount} 个来源至少出现过一次请求失败，其他来源可能正常返回但没有匹配结果。搜索结果可能不完整。`
+}
+
 export default function SearchPage() {
   const nav = useNavigate()
   const c = useSearchController()
@@ -171,10 +183,16 @@ export default function SearchPage() {
         <Loading text={c.workTotal > 0 ? `正在搜索（${c.workDone}/${c.workTotal} 个来源完成）…` : '正在搜索…'} />
       )}
 
-      {Object.keys(c.workFailed).length > 0 && (
+      {/* 修复3：S1 时提示条隐藏，原因并入空态；其余情况保留 */}
+      {Object.keys(c.workFailed).length > 0 && c.emptyStateType !== 'all-failed' && (
         <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0' }}>
           部分来源未返回：{Object.entries(c.workFailed).map(([id, r]) => `${SOURCE_NAMES[id] ?? id}（${r}）`).join('、')}
         </div>
+      )}
+
+      {/* 修复3：资讯错误提示，仅在范围确实包含资讯时显示 */}
+      {(c.scope === 'all' || c.scope === 'news') && c.newsError && (
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0' }}>{c.newsError}</div>
       )}
 
       {shownGroups.map((g) => g.items.length > 0 && (
@@ -200,7 +218,29 @@ export default function SearchPage() {
         </Section>
       )}
 
-      {!c.workLoading && c.searched && c.workGroups.length === 0 && c.newsResults.length === 0 && (
+      {c.emptyStateType === 'all-failed' && (
+        <EmptyState
+          icon="info"
+          title="所有来源都未能返回结果"
+          desc={`本次搜索的所有来源均请求失败，请检查网络或重新搜索。失败来源：${Object.entries(c.workFailed).map(([id, r]) => `${SOURCE_NAMES[id] ?? id}（${r}）`).join('、')}`}
+          actionText="重新搜索"
+          onAction={c.onResearch}
+        />
+      )}
+
+      {c.emptyStateType === 'news-empty' && (
+        <EmptyState icon="search" title={`没有找到「${c.searched}」的资讯`} desc="换个关键词、或切换搜索范围试试。" />
+      )}
+
+      {c.emptyStateType === 'partial-failure' && (
+        <EmptyState
+          icon="search"
+          title={`没有找到「${c.searched}」`}
+          desc={allFailedCopy(Object.keys(c.workFailed).length, Object.values(c.enabledMap).filter(Boolean).length)}
+        />
+      )}
+
+      {c.emptyStateType === 'no-results' && (
         <EmptyState icon="search" title={`没有找到「${c.searched}」`} desc="换个关键词、或切换搜索范围试试。" />
       )}
 
