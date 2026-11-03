@@ -1,21 +1,21 @@
 /** 内容来源注册表：每来源独立适配器，单源故障不影响其他来源 */
-import type { SourceAdapter, WorkItem } from './types'
+import type { WorkItem } from './types'
 import { normalizeCover } from '../../utils/cover'
 import { perf } from '../perf'
 import { isHomeSkipped, recordHomeSuccess, recordHomeFailure } from './health'
-import anilist from './anilist'
-import jikan from './jikan'
-import bilibili from './bilibili'
-import mangadex from './mangadex'
+import { SOURCE_ORDER, SOURCES, SOURCE_NAMES, getSource } from './registry'
+import { isSourceEnabled } from './settings'
 
-/** 聚合结果排序：中文优先（bilibili 中文动漫 → mangadex 中文别名漫画 → AniList → Jikan） */
-export const SOURCE_ORDER: Record<string, number> = { bilibili: 0, mangadex: 1, anilist: 2, jikan: 3 }
-
-export const SOURCES: SourceAdapter[] = [bilibili, mangadex, anilist, jikan]
-
-export const SOURCE_NAMES: Record<string, string> = Object.fromEntries(SOURCES.map((s) => [s.id, s.name]))
-
-export const getSource = (id: string): SourceAdapter => SOURCES.find((s) => s.id === id) ?? SOURCES[0]
+// 来源注册表已迁至 registry.ts（阶段 3 第 1 步）；此处转出保持既有 import 不变
+export { SOURCE_ORDER, SOURCES, SOURCE_NAMES, getSource }
+export { rank, UNKNOWN_RANK, enabledSources, isEnabled } from './registry'
+export {
+  isSourceEnabled,
+  setSourceEnabled,
+  setAllSourcesEnabled,
+  getDisabledSources,
+  resetSourceSettings,
+} from './settings'
 
 /** 多来源去重：同源按 sourceId:workId；跨源按 归一化标题+类型 合并（保留优先来源） */
 export function dedup(items: WorkItem[]): WorkItem[] {
@@ -62,7 +62,11 @@ function finish(items: WorkItem[]): WorkItem[] {
  * 首页快源（AniList/B站 1~2s）先渲染，慢源（MangaDex）后到渐进补入，互不阻塞。
  * 返回各源失败原因（sourceId → 分类）。
  */
-export interface StreamOptions { skipUnhealthy?: boolean }
+export interface StreamOptions {
+  skipUnhealthy?: boolean
+  /** 是否按用户开关过滤来源（首页路径传 true）；false/省略 = 不过滤（保持旧行为） */
+  respectEnabled?: boolean
+}
 
 export async function searchAllStream(
   opts: { kw?: string; kind: WorkItem['kind']; genre?: string; sort?: string; page?: number },
@@ -70,8 +74,10 @@ export async function searchAllStream(
   streamOpts?: StreamOptions,
 ): Promise<{ failed: Record<string, string> }> {
   const failed: Record<string, string> = {}
+  // 开关过滤：被禁用的来源**完全不发起请求**（不进入 Promise.allSettled 的 map）
+  const list = streamOpts?.respectEnabled ? SOURCES.filter((s) => isSourceEnabled(s.id)) : SOURCES
   await Promise.allSettled(
-    SOURCES.map(async (s) => {
+    list.map(async (s) => {
       // O1 健康记忆：仅首页路径（skipUnhealthy）生效——冷却中的来源直接跳过，不拖累首屏
       if (streamOpts?.skipUnhealthy && isHomeSkipped(s.id)) {
         perf({ phase: 'source-skip', sourceId: s.id, status: 'cache-hit', detail: '健康记忆跳过' })

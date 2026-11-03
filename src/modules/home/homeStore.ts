@@ -73,7 +73,9 @@ export const useHomeStore = create<HomeState>((set, get) => ({
               set({ [block]: { ...get()[block], loading: false } } as never)
             }
           },
-          { skipUnhealthy: true }, // O1: 首页路径启用健康记忆（搜索/详情不受影响）
+          // O1: 首页路径启用健康记忆（搜索/详情不受影响）
+          // 阶段3 第1步：respectEnabled 让被禁用来源完全不发起请求
+          { skipUnhealthy: true, respectEnabled: true },
         )
         set({
           [block]: {
