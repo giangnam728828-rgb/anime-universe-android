@@ -17,7 +17,7 @@ import {
   isValidYear,
   makeDescKey,
 } from './entry'
-import { byFixedKey } from './compare'
+import { byFixedKey, byFixedKeyWithQuery } from './compare'
 
 // ---------------------------------------------------------------------------
 // §3.1 aggId 唯一分配器（★ v1.9：私有作用域，不对外导出）
@@ -313,7 +313,11 @@ function mergeDisplay(entries: SourceEntry[]): Omit<AggregatedWork, 'aggId' | 'e
  *  3) 每组计算 descKey，由 allocator 唯一签发 aggId
  *  4) 组列表按首次出现序；组内 entries 恒为 byFixedKey 序
  */
-export function aggregate(items: WorkItem[], onReject?: (sourceId: string, reason: string) => void): AggregatedWork[] {
+export function aggregate(
+  items: WorkItem[],
+  onReject?: (sourceId: string, reason: string) => void,
+  kw?: string,
+): AggregatedWork[] {
   // 第 0 步：统一转换 + 校验（非法条目在此被拒，绝不进入比较器）
   const entries: SourceEntry[] = []
   for (const it of items) {
@@ -321,8 +325,8 @@ export function aggregate(items: WorkItem[], onReject?: (sourceId: string, reaso
     if (e) entries.push(e)
   }
 
-  // 入口全序排序：与输入顺序无关
-  const sorted = [...entries].sort((a, b) => byFixedKey(a.item, b.item))
+  // 入口全序排序：与输入顺序无关（传入 kw 时按相关性优先，平局仍回退 byFixedKey）
+  const sorted = [...entries].sort((a, b) => byFixedKeyWithQuery(a.item, b.item, kw))
 
   // 贪心分组，但每步做 pairwise 全检
   const groups: SourceEntry[][] = []
@@ -343,9 +347,9 @@ export function aggregate(items: WorkItem[], onReject?: (sourceId: string, reaso
     }
   }
 
-  // 组内排序（byFixedKey 恒序）+ 组列表按首元素序
-  for (const g of groups) g.sort((a, b) => byFixedKey(a.item, b.item))
-  groups.sort((a, b) => byFixedKey(a[0].item, b[0].item))
+  // 组内排序（有 kw 时按相关性）+ 组列表按首元素序
+  for (const g of groups) g.sort((a, b) => byFixedKeyWithQuery(a.item, b.item, kw))
+  groups.sort((a, b) => byFixedKeyWithQuery(a[0].item, b[0].item, kw))
 
   // descKey + 唯一 ID 签发
   const alloc = createAggIdAllocator()

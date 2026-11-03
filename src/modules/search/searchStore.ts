@@ -75,6 +75,8 @@ let newsSeqCounter = 0
 let entries: SourceEntry[] = []
 /** UI key 映射器：有状态可变对象，本模块独占持有 */
 let mapper = createUiKeyMapper()
+/** 当前搜索会话关键词：仅用于相关性排序，不参与任何去重/分组判定 */
+let sessionKw: string | undefined = undefined
 /** key 空间 epoch：仅计算失败重建 mapper 时推进 */
 let mapperEpoch = 0
 
@@ -165,6 +167,7 @@ function rebuildMapper(): void {
 /** 原地重置作品运行时（私有，只允许 beginWorkSession / clearEmptySearch 调用） */
 function resetWorkRuntimeUnsafe(): void {
   entries = []
+  sessionKw = undefined
   // 直接换新实例：语义等价于 reset()，但旧状态在对象层面彻底丢弃。
   // ★ 不推进 epoch：新搜索是干净的重新开始，不是错误恢复；
   //   保持 epoch 才能让 React 在新旧结果间正常 diff（而非整屏重挂载）。
@@ -220,9 +223,11 @@ export function currentMapperEpoch(): number {
  * 只作用于作品域；资讯域字段原样保留。
  * @returns 新序号
  */
-export function beginWorkSession(opts: { loading: boolean }): number {
+export function beginWorkSession(opts: { loading: boolean; kw?: string }): number {
   bumpWorkSeq()
   resetWorkRuntimeUnsafe()
+  // ★ 独立搜索体验修复：记录本会话关键词（空串按未提供处理）
+  sessionKw = opts.kw && opts.kw.trim() ? opts.kw : undefined
   emitSnapshot({
     workGroups: EMPTY_GROUPS,
     entries: EMPTY_ENTRIES,
@@ -328,7 +333,7 @@ export function commitWorkBatch(expectedWorkSeq: number, batch: readonly WorkIte
 
     assertNotFailedAt('aggregate')
     const deduped = dedupWithinSource(nextEntries)
-    const groups = aggregate(deduped.map((e) => e.item))
+    const groups = aggregate(deduped.map((e) => e.item), undefined, sessionKw)
 
     assertNotFailedAt('assign')
     const keyed = mapper.assign(groups)

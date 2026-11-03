@@ -201,11 +201,12 @@ export function useSearchController(): SearchController {
    * 开始新搜索会话：作废上一会话（逻辑取消，不停止底层 HTTP）。
    * store 侧一次性完成：推进序号 → 重置作品运行时 → 清 pipelineError → emit。
    */
-  const startSession = useCallback(() => {
+  const startSession = useCallback((kw: string) => {
     ctrlRef.current?.abort()
     const ctrl = new AbortController()
     ctrlRef.current = ctrl
-    const mySeq = beginWorkSession({ loading: true })
+    // ★ 独立搜索体验修复：把当前关键词传入 store，供相关性排序使用（仅此传参点）
+    const mySeq = beginWorkSession({ loading: true, kw })
     return { mySeq, ctrl }
   }, [])
 
@@ -223,7 +224,7 @@ export function useSearchController(): SearchController {
         return
       }
 
-      const { mySeq, ctrl } = startSession()
+      const { mySeq, ctrl } = startSession(kw)
       patchSnapshot({ searched: kw, q: kw })
 
       // 每次真正执行搜索前重读来源设置（跨页面同步方案 i）

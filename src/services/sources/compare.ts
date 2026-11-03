@@ -266,3 +266,91 @@ export function byFixedKey(a: WorkItem, b: WorkItem): number {
 export function compareFullRecord(a: WorkItem, b: WorkItem): number {
   return compareRecord(a, b)
 }
+
+// ---------------------------------------------------------------------------
+// 搜索相关性比较器（独立搜索体验修复 · 方案 B）
+//
+// 设计约束：
+//  - relevance() 是**纯函数**：相同 (item, kw) 恒返回相同分档，保证全序
+//  - title / titleNative 取**较高**匹配等级，不叠加
+//  - 空关键词、关键词长度 < 2 时不产生虚假相关分
+//  - 规范化统一处理大小写、空白、全半角与常见标点
+//  - 相关性相同 → 严格回退到 SOURCE_ORDER，再回退 compareRecord
+// ---------------------------------------------------------------------------
+
+/** 相关性分档：数值越大越相关 */
+export const RELEVANCE = Object.freeze({
+  EXACT: 4,
+  PREFIX: 3,
+  CONTAINS: 2,
+  PARTIAL: 1,
+  NONE: 0,
+})
+
+/** PARTIAL 档要求关键词至少这么长（避免单字符过度匹配） */
+const PARTIAL_MIN_KW_LEN = 2
+/** PARTIAL 档取关键词的前 N 个字符做片段匹配 */
+const PARTIAL_PREFIX_LEN = 2
+
+/**
+ * 统一规范化：小写 + 全角转半角 + 去除空白与常见标点。
+ * 只用于相关性匹配，**不修改** entry.ts 的 basicKey（它服务 matchKey）。
+ */
+export function normForRelevance(s?: string | null): string {
+  if (!s) return ''
+  return s
+    .toLowerCase()
+    // 全角 ASCII（！至 ～）转半角
+    .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    // 全角空格
+    .replace(/\u3000/g, '')
+    // 空白 + 常见中英日标点/符号
+    .replace(/[\s:：·・'’‘`\-—–_/\\|!?？?、，,。.「」『』【】\[\]()（）{}<>《》〈〉~～"“”*#@&+]+/g, '')
+    .trim()
+}
+
+/** 单个标题对关键词的匹配等级 */
+function matchLevel(title: string, kw: string): number {
+  if (!title || !kw) return RELEVANCE.NONE
+  if (title === kw) return RELEVANCE.EXACT
+  if (title.startsWith(kw)) return RELEVANCE.PREFIX
+  if (title.includes(kw)) return RELEVANCE.CONTAINS
+  if (kw.length >= PARTIAL_MIN_KW_LEN) {
+    const head = kw.slice(0, PARTIAL_PREFIX_LEN)
+    if (head.length >= PARTIAL_MIN_KW_LEN && title.includes(head)) return RELEVANCE.PARTIAL
+  }
+  return RELEVANCE.NONE
+}
+
+/**
+ * 计算单条记录对关键词的相关性分档（0..4）。
+ * title 与 titleNative 取**较高**等级，不叠加。
+ */
+export function relevance(item: WorkItem, kw?: string | null): number {
+  const k = normForRelevance(kw)
+  if (!k) return RELEVANCE.NONE
+  const a = matchLevel(normForRelevance(item.title), k)
+  const b = matchLevel(normForRelevance(item.titleNative), k)
+  return a > b ? a : b
+}
+
+/** 相关性比较器：分高者在前；相同返回 0，交给后续规则 */
+export function cmpRelevance(a: WorkItem, b: WorkItem, kw?: string | null): number {
+  const ra = relevance(a, kw)
+  const rb = relevance(b, kw)
+  return rb - ra
+}
+
+/**
+ * 带相关性的排序键：相关性 → SOURCE_ORDER(rank) → compareRecord。
+ *
+ * 不传 kw（undefined/null/空串）时**逐字等价**于 byFixedKey，保持旧行为。
+ * 全序性：relevance 为纯函数，平局严格回退到 byFixedKey 的全序，故整体仍是全序。
+ */
+export function byFixedKeyWithQuery(a: WorkItem, b: WorkItem, kw?: string | null): number {
+  if (kw) {
+    const d = cmpRelevance(a, b, kw)
+    if (d) return Math.sign(d)
+  }
+  return byFixedKey(a, b)
+}
