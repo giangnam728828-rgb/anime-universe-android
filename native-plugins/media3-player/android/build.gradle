@@ -52,5 +52,5 @@ dependencies {
     implementation "androidx.appcompat:appcompat:1.6.1"
     implementation "androidx.core:core-ktx:1.12.0"
     // ★ 与 CI 注入的 kotlin-gradle-plugin 版本保持一致
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.21"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.2.10"
 }

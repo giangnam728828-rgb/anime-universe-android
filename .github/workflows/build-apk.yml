@@ -137,7 +137,7 @@ jobs:
           )
           s = s.replace(
               "classpath 'com.android.tools.build:gradle:8.7.3'",
-              "classpath 'com.android.tools.build:gradle:8.7.3'\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21'",
+              "classpath 'com.android.tools.build:gradle:8.7.3'\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.10'",
               1,
           )
           p.write_text(s, encoding='utf-8')
@@ -145,6 +145,23 @@ jobs:
           PYEOF
           echo "--- 验证 ---"
           grep -n "kotlin-gradle-plugin" android/build.gradle
+
+          # ★ 强制对齐 kotlin-stdlib 版本：AGP 会传递 2.2.10，
+          #   与 kotlin-gradle-plugin 2.0.21 的编译器元数据不兼容
+          cat >> android/build.gradle <<'GRADLEEOF'
+
+// ★ 播放专项阶段1：统一 Kotlin stdlib 版本
+allprojects {
+    configurations.all {
+        resolutionStrategy {
+            force 'org.jetbrains.kotlin:kotlin-stdlib:2.2.10'
+            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10'
+            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.10'
+        }
+    }
+}
+GRADLEEOF
+          echo "✅ kotlin-stdlib 版本已强制对齐到 2.2.10"
 
           # 把插件作为独立 module 引入
           python3 - <<'PYEOF'
