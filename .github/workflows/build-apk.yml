@@ -146,22 +146,14 @@ jobs:
           echo "--- 验证 ---"
           grep -n "kotlin-gradle-plugin" android/build.gradle
 
-          # ★ 强制对齐 kotlin-stdlib 版本：AGP 会传递 2.2.10，
-          #   与 kotlin-gradle-plugin 2.0.21 的编译器元数据不兼容
-          cat >> android/build.gradle <<'GRADLEEOF'
-
-// ★ 播放专项阶段1：统一 Kotlin stdlib 版本
-allprojects {
-    configurations.all {
-        resolutionStrategy {
-            force 'org.jetbrains.kotlin:kotlin-stdlib:2.2.10'
-            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10'
-            force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.10'
-        }
-    }
-}
-GRADLEEOF
-          echo "✅ kotlin-stdlib 版本已强制对齐到 2.2.10"
+          # ★ 强制对齐 kotlin-stdlib 版本（AGP 传递版本与 kotlin 编译器需一致）
+          if ! grep -q resolutionStrategy android/build.gradle; then
+            echo 'Ci8vIEtvdGxpbiBzdGRsaWIg57uf5LiA77yI5pKt5pS+5LiT6aG56Zi25q61Me+8iQphbGxwcm9qZWN0cyB7CiAgICBjb25maWd1cmF0aW9ucy5hbGwgewogICAgICAgIHJlc29sdXRpb25TdHJhdGVneSB7CiAgICAgICAgICAgIGZvcmNlICdvcmcuamV0YnJhaW5zLmtvdGxpbjprb3RsaW4tc3RkbGliOjIuMi4xMCcKICAgICAgICAgICAgZm9yY2UgJ29yZy5qZXRicmFpbnMua290bGluOmtvdGxpbi1zdGRsaWItamRrNzoyLjIuMTAnCiAgICAgICAgICAgIGZvcmNlICdvcmcuamV0YnJhaW5zLmtvdGxpbjprb3RsaW4tc3RkbGliLWpkazg6Mi4yLjEwJwogICAgICAgIH0KICAgIH0KfQo=' | base64 -d >> android/build.gradle
+            echo "✅ kotlin-stdlib 已强制对齐到 2.2.10"
+          else
+            echo "已对齐，跳过"
+          fi
+          tail -12 android/build.gradle
 
           # 把插件作为独立 module 引入
           python3 - <<'PYEOF'
