@@ -16,9 +16,47 @@ import {
   toSourceEntry,
   isValidYear,
   makeDescKey,
-  createAggIdAllocator,
 } from './entry'
-import { byFixedKey, compareFullRecord } from './compare'
+import { byFixedKey } from './compare'
+
+// ---------------------------------------------------------------------------
+// §3.1 aggId 唯一分配器（★ v1.9：私有作用域，不对外导出）
+// ---------------------------------------------------------------------------
+
+/** 内部接口：外部模块无法 import 此类型（未导出） */
+interface AggIdAllocator {
+  issue(descKey: string): string
+  size(): number
+  snapshot(): string[]
+}
+
+/**
+ * 创建会话内 aggId 分配器。
+ *
+ * 核心规则：
+ *  - 占用表全量唯一，**循环 while** 直到找到未占用候选，而不是简单追加一次
+ *  - 防止「某组原始 descKey 恰好形如 `["manga","X",null]#2`」与「`["manga","X",null]` 第 2 份」撞车
+ *  - ★ 唯一签发口：本函数**不导出**，只有 aggregate() 能创建与调用；
+ *    外部无法拿到独立签发器，因此不存在第二个 ID 命名空间
+ */
+function createAggIdAllocator(): AggIdAllocator {
+  const occupied = new Set<string>()
+  return Object.freeze({
+    issue(descKey: string): string {
+      if (!occupied.has(descKey)) {
+        occupied.add(descKey)
+        return descKey
+      }
+      let n = 2
+      while (occupied.has(`${descKey}#${n}`)) n += 1
+      const id = `${descKey}#${n}`
+      occupied.add(id)
+      return id
+    },
+    size: () => occupied.size,
+    snapshot: () => [...occupied],
+  })
+}
 
 // ---------------------------------------------------------------------------
 // §4.3 同源去重
@@ -62,7 +100,9 @@ function pickBetter(a: SourceEntry, b: SourceEntry): SourceEntry {
   const ra = richnessScore(a)
   const rb = richnessScore(b)
   if (ra !== rb) return ra > rb ? a : b
-  return compareFullRecord(a.item, b.item) <= 0 ? a : b
+  // ★ v1.9 修复：平局改用 byFixedKey（规格指定），不再用 compareFullRecord
+  const c = byFixedKey(a.item, b.item)
+  return c <= 0 ? a : b
 }
 
 /**
@@ -70,19 +110,57 @@ function pickBetter(a: SourceEntry, b: SourceEntry): SourceEntry {
  * 不跨源删除（不同 sourceId 的同 workId 条目全部保留）。
  */
 export function dedupWithinSource(entries: SourceEntry[]): SourceEntry[] {
+  // ★ v1.9 修复：先按 byFixedKey 全序排序，再分桶去重（规格指定顺序）
+  const ordered = [...entries].sort((x, y) => byFixedKey(x.item, y.item))
   const buckets = new Map<string, SourceEntry>()
-  for (const e of entries) {
+  for (const e of ordered) {
     const k = dedupKey(e)
     const cur = buckets.get(k)
     buckets.set(k, cur ? pickBetter(cur, e) : e)
   }
-  // 输出按 byFixedKey 全序排序，与输入顺序完全无关
+  // 输出保持 byFixedKey 全序（分桶后重排，确保 Map 插入序不影响结果）
   return [...buckets.values()].sort((a, b) => byFixedKey(a.item, b.item))
 }
 
 // ---------------------------------------------------------------------------
 // §4.2 三级匹配判定 + 佐证 + 排除
 // ---------------------------------------------------------------------------
+
+/**
+ * 季度/季数标记提取（v1.9 修复：设计文档明确要求的排除条件）。
+ *
+ * 识别：第N季 / 第N期 / 第N部 / Season N / S{N} / 第Nクール
+ * 归一化为统一的季数序号字符串；无标记返回 null。
+ * 典型场景：同标题的「鬼灭之刃 第一季」与「鬼灭之刃 第二季」必须拒绝合并。
+ */
+export function seasonMarker(title: string): string | null {
+  const t = (title || '').toLowerCase()
+  // 中文数字 → 阿拉伯数字
+  const cn: Record<string, string> = {
+    一: '1', 二: '2', 三: '3', 四: '4', 五: '5',
+    六: '6', 七: '7', 八: '8', 九: '9', 十: '10',
+  }
+  const toNum = (raw: string): string => {
+    if (/^\d+$/.test(raw)) return String(Number(raw))
+    if (cn[raw] !== undefined) return cn[raw] // ★ 修复：单个中文数字（一/二/三…十）
+    if (raw === '十') return '10'
+    if (/^十[一二三四五六七八九]$/.test(raw)) return String(10 + Number(cn[raw[1]]))
+    if (/^[一二三四五六七八九]十$/.test(raw)) return String(Number(cn[raw[0]]) * 10)
+    if (/^[一二三四五六七八九]十[一二三四五六七八九]$/.test(raw))
+      return String(Number(cn[raw[0]]) * 10 + Number(cn[raw[2]]))
+    return raw
+  }
+  const patterns: RegExp[] = [
+    /第\s*([0-9一二三四五六七八九十]+)\s*[季期部クール]/, // 第N季/期/部/クール
+    /season\s*([0-9]+)/,
+    /\bs([0-9]+)\b/,
+  ]
+  for (const re of patterns) {
+    const m = t.match(re)
+    if (m) return toNum(m[1])
+  }
+  return null
+}
 
 /**
  * 排除条件：命中即**绝不合并**（即使标题/年份都相符）。
@@ -92,7 +170,13 @@ export function isExcluded(a: SourceEntry, b: SourceEntry): boolean {
   // 1) kind 不同：动漫 vs 漫画 → 不合并
   if (a.kind !== b.kind) return true
 
-  // 2) formatCn 明确冲突（TV vs 剧场版 等）
+  // 2) 季度标记冲突：同一部作品的不同季**不可合并**
+  const sa = seasonMarker(a.title) || ''
+  const sb = seasonMarker(b.title) || ''
+  if (sa && sb && sa !== sb) return true // 双方都有季度标记且不同 → 冲突
+  if ((sa && !sb) || (!sa && sb)) return true // 一方有、一方无 → 视为不同作品，拒绝
+
+  // 3) formatCn 明确冲突（TV vs 剧场版 等）
   const fa = (a.formatCn || '').trim()
   const fb = (b.formatCn || '').trim()
   if (fa && fb && fa !== fb) {
@@ -101,7 +185,7 @@ export function isExcluded(a: SourceEntry, b: SourceEntry): boolean {
     if ((isMovie(fa) && isTV(fb)) || (isTV(fa) && isMovie(fb))) return true
   }
 
-  // 3) genres 两者都非空且交集为空 → 视为不同类型作品
+  // 4) genres 两者都非空且交集为空 → 视为不同类型作品
   if (a.genres.length > 0 && b.genres.length > 0) {
     const sa = new Set(a.genres.map((g) => g.toLowerCase()))
     const hit = b.genres.some((g) => sa.has(g.toLowerCase()))
@@ -121,6 +205,8 @@ export function yearCorroborates(a: SourceEntry, b: SourceEntry): boolean | 'na'
   const oka = isValidYear(a.year) && a.yearMeaning !== 'unknown'
   const okb = isValidYear(b.year) && b.yearMeaning !== 'unknown'
   if (!oka || !okb) return 'na' // 无法佐证，交给标题判定
+  // ★ v1.9 修复：语义必须一致才可比较年份（'start' vs 'finished' 等不可互证）
+  if (a.yearMeaning !== b.yearMeaning) return 'na'
   return a.year === b.year
 }
 
@@ -281,7 +367,6 @@ export {
 export {
   basicKey,
   makeDescKey,
-  createAggIdAllocator,
   isValidYear,
   toSourceEntry,
   validateWorkItem,
@@ -291,7 +376,7 @@ export {
   WORK_ITEM_FIELD_LIST,
 } from './entry'
 export { rank, UNKNOWN_RANK, SOURCE_ORDER } from './registry'
-export type { SourceEntry, YearMeaning, AggIdAllocator } from './entry'
+export type { SourceEntry, YearMeaning } from './entry'
 
 /** 测试辅助：richnessScore 供断言使用 */
 export const __richnessScore = richnessScore

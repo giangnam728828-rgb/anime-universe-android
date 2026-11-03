@@ -68,47 +68,6 @@ export function makeDescKey(kind: Kind, matchKey: string, year: unknown): string
 }
 
 // ---------------------------------------------------------------------------
-// §3.1 aggId 唯一分配器（循环碰撞检查 + 单一签发口）
-// ---------------------------------------------------------------------------
-
-export interface AggIdAllocator {
-  /** 为一个 descKey 签发会话内唯一的 aggId；同一 descKey 第二次起追加 #2/#3… */
-  issue(descKey: string): string
-  /** 当前已占用集合大小（测试用） */
-  size(): number
-  /** 调试快照（只读） */
-  snapshot(): string[]
-}
-
-/**
- * 创建会话内 aggId 分配器。
- *
- * 核心规则（v1.4 修订，复审通过）：
- *  - 占用表全量唯一，**循环 while** 直到找到未占用候选，而不是简单追加一次
- *  - 防止「某组原始 descKey 恰好形如 `["manga","X",null]#2`」与「`["manga","X",null]` 第 2 份」撞车
- *  - 唯一签发口：外部无法绕过本函数直接拼 aggId（descKey 拼装函数不导出为可变入口）
- */
-export function createAggIdAllocator(): AggIdAllocator {
-  const occupied = new Set<string>()
-  return {
-    issue(descKey: string): string {
-      if (!occupied.has(descKey)) {
-        occupied.add(descKey)
-        return descKey
-      }
-      let n = 2
-      // ★ 循环：跳过所有已被占用的候选（含"原始 descKey 恰好形如 X#2"的情况）
-      while (occupied.has(`${descKey}#${n}`)) n += 1
-      const id = `${descKey}#${n}`
-      occupied.add(id)
-      return id
-    },
-    size: () => occupied.size,
-    snapshot: () => [...occupied],
-  }
-}
-
-// ---------------------------------------------------------------------------
 // §4.8 18 字段运行时校验
 // ---------------------------------------------------------------------------
 
@@ -189,6 +148,49 @@ export function validateWorkItem(it: unknown): string | null {
   return null
 }
 
+/**
+ * ★ 规范化（v1.9 修复）：可选字段的 null 统一为 undefined。
+ *
+ * 原因：`strCompare`/`cmpNum` 把 null 与 undefined 视为相等（设计如此，表示"无值"），
+ * 但二者在对象上是**可区分的原始值**。若不规范化，两条仅在 null/undefined 上不同的记录
+ * 会得到 compareRecord===0，去重结果就退化为依赖输入顺序。
+ *
+ * 处理原则：既然比较器认为二者等价，就在**统一入口**把它们折叠成同一个规范值（undefined），
+ * 保证"输出与输入顺序无关"，而不是在 pickBetter 里打补丁。
+ * 注意：不修改调用方传入的对象（在拷贝上规范化）。
+ */
+function normalizeOptional<T extends string | number | undefined>(
+  v: T | null,
+): T | undefined {
+  return v === null ? undefined : (v as T | undefined)
+}
+
+/** 规范化 18 字段中的可选字段（sourceId/workId/kind/title/genres 为必填，不参与） */
+function normalizeWorkItem(item: WorkItem): WorkItem {
+  return {
+    sourceId: item.sourceId,
+    workId: item.workId,
+    kind: item.kind,
+    title: item.title,
+    genres: item.genres,
+    titleNative: normalizeOptional(item.titleNative),
+    cover: normalizeOptional(item.cover),
+    coverColor: normalizeOptional(item.coverColor),
+    description: normalizeOptional(item.description),
+    score: normalizeOptional(item.score),
+    year: normalizeOptional(item.year),
+    statusCn: normalizeOptional(item.statusCn),
+    formatCn: normalizeOptional(item.formatCn),
+    titleLang: normalizeOptional(item.titleLang),
+    descLang: normalizeOptional(item.descLang),
+    episodes: normalizeOptional(item.episodes),
+    chapters: normalizeOptional(item.chapters),
+    favorites: normalizeOptional(item.favorites),
+  } as WorkItem
+}
+
+export { normalizeWorkItem }
+
 /** 深冻结 WorkItem：顶层 + genres 数组（当前结构下仅 genres 是嵌套引用） */
 export function freezeWorkItem(item: WorkItem): Readonly<WorkItem> {
   const copy: WorkItem = { ...item }
@@ -242,7 +244,8 @@ export function toSourceEntry(item: WorkItem, onReject?: RejectReporter): Source
     onReject?.((item as Partial<WorkItem>)?.sourceId ?? 'unknown', err)
     return null
   }
-  const frozen = freezeWorkItem(item)
+  const normalized = normalizeWorkItem(item)
+  const frozen = freezeWorkItem(normalized)
   return Object.freeze({
     sourceId: frozen.sourceId,
     workId: frozen.workId,
