@@ -11,6 +11,7 @@ ext {
     media3Version = '1.11.1'
 }
 
+apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
