@@ -53,4 +53,9 @@ dependencies {
     implementation "androidx.core:core-ktx:1.12.0"
     // ★ 与 CI 注入的 kotlin-gradle-plugin 版本保持一致
     implementation "org.jetbrains.kotlin:kotlin-stdlib:2.2.10"
+
+    // ★ Capacitor 核心 API：由宿主的 capacitor-android 提供
+    //   本地插件必须以 local project 引用宿主工程同款版本，
+    //   否则 @CapacitorPlugin / Plugin / PluginMethod 无法解析
+    compileOnly project(':capacitor-android')
 }
