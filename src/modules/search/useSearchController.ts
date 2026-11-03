@@ -202,9 +202,16 @@ export function useSearchController(): SearchController {
       // 会话级结算守卫（闭包隔离，旧会话无法污染新会话）
       const guard = createSessionGuard(isAlive)
 
-      const handleSettle = (sourceId: string, reason: SettleReason) => {
+      /**
+       * 结算身份 = (kind, sourceId) 复合键。
+       * ★ 同一来源的 anime 与 manga 是**两个独立结算单元**，任一方失败都必须进入 workFailed，
+       *   不得被另一方的结算（无论成功或失败）吞掉。
+       * ★ workFailed 仍以 sourceId 为键，并保持**失败粘性**：ok 分支原样返回旧表，
+       *   已记录的失败不会被后到的成功清除；同源多次失败只占一个键（UI 只展示一次）。
+       */
+      const handleSettle = (kind: Kind, sourceId: string, reason: SettleReason) => {
         // 来源层在逻辑取消时根本不调用 onSettle，因此 reason 不会为 cancelled
-        if (!guard.trySettle(sourceId)) return
+        if (!guard.trySettle(`${kind}:${sourceId}`)) return
         commit(() => {
           const cur = getSnapshot()
           patchSnapshot({
@@ -251,7 +258,7 @@ export function useSearchController(): SearchController {
               respectEnabled: true,
               signal: ctrl.signal,
               requestTimeoutMs: SEARCH_TIMEOUT_MS,
-              onSettle: handleSettle,
+              onSettle: (sid, reason) => handleSettle(k, sid, reason),
               onPipelineError: handlePipelineError,
             }),
           ),
