@@ -96,7 +96,14 @@ const anilist: SourceAdapter = {
       sort: sortToAnilist(opts.sort, !!opts.kw?.trim()),
       genres: opts.genre ? [opts.genre] : null,
     }
-    const json = await cachedPost(ENDPOINT, { query: SEARCH_Q, variables }) as any
+    // ★ 阶段3第6步：仅 search 接收策略；getDetail 刻意不传，保持原行为
+    const json = await cachedPost(
+      ENDPOINT,
+      { query: SEARCH_Q, variables },
+      opts.reqPolicy
+        ? { timeout: opts.reqPolicy.timeoutMs ?? 10000, retries: opts.reqPolicy.retries ?? 1 }
+        : {},
+    ) as any
     if (json?.errors?.length) throw new Error(json.errors[0].message || 'AniList 返回错误')
     const page = json?.data?.Page
     return {

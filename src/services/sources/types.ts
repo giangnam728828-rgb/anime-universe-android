@@ -33,12 +33,26 @@ export interface WorkDetail extends WorkItem {
   siteUrl?: string
 }
 
+/**
+ * 适配器级请求策略（阶段3第6步）。
+ * 只有调用方**显式**传入时才覆盖 HTTP 层默认值；不传 = 完全维持原行为。
+ * 作用域仅限 `search()`，**不作用于 `getDetail()`**。
+ */
+export interface SourceRequestPolicy {
+  /** 底层单次请求超时（毫秒）。省略 = HTTP 层默认 10000 */
+  timeoutMs?: number
+  /** 底层重试次数。省略 = HTTP 层默认 1 */
+  retries?: number
+}
+
 export interface SearchOptions {
   kw?: string
   kind: Kind
   genre?: string
   sort?: string
   page?: number
+  /** 阶段3第6步：发现页专用请求策略；其他调用方不传 → 行为逐字不变 */
+  reqPolicy?: SourceRequestPolicy
 }
 
 export interface SearchResult { items: WorkItem[]; hasNext: boolean }

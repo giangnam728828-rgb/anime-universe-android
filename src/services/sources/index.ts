@@ -1,5 +1,5 @@
 /** 内容来源注册表：每来源独立适配器，单源故障不影响其他来源 */
-import type { WorkItem } from './types'
+import type { WorkItem, SourceRequestPolicy } from './types'
 import { normalizeCover } from '../../utils/cover'
 import { perf } from '../perf'
 import { isHomeSkipped, recordHomeSuccess, recordHomeFailure } from './health'
@@ -160,6 +160,12 @@ export interface StreamOptions {
   onSettle?: (sourceId: string, reason: SettleReason) => void
   /** ★ 管线错误通道：聚合/结算回调异常，**不计入来源失败** */
   onPipelineError?: PipelineErrorReporter
+  /**
+   * ★ 阶段3第6步：发现页专用，按 sourceId 指定底层请求策略。
+   * 只在调用 `s.search()` 时注入 SearchOptions.reqPolicy；
+   * **不影响 getDetail**，也不影响未列出的来源与未传此项的调用方。
+   */
+  sourceReqPolicy?: Readonly<Record<string, SourceRequestPolicy>>
 }
 
 /**
@@ -221,10 +227,13 @@ export async function searchAllStream(
       }
 
       const t0 = Date.now() // 阶段2性能计时：每源独立（开始/结束/耗时/成败）
+      // ★ 阶段3第6步：按来源注入请求策略；未配置时 searchArg === opts（同一引用，行为逐字不变）
+      const policy = streamOpts?.sourceReqPolicy?.[s.id]
+      const searchArg = policy ? { ...opts, reqPolicy: policy } : opts
       try {
         const r = isSearchPath
-          ? await withTimeout(s.search(opts), timeoutMs, () => new SourceTimeoutError(s.id, timeoutMs), streamOpts?.signal)
-          : await withTimeout(s.search(opts), 8000)
+          ? await withTimeout(s.search(searchArg), timeoutMs, () => new SourceTimeoutError(s.id, timeoutMs), streamOpts?.signal)
+          : await withTimeout(s.search(searchArg), 8000)
         perf({ phase: 'source-request', sourceId: s.id, status: 'ok', ms: Date.now() - t0, detail: `${r.items.length}条` })
         if (streamOpts?.skipUnhealthy) recordHomeSuccess(s.id) // O1: 成功立即清零
         if (r.items.length) {
@@ -258,9 +267,22 @@ export async function searchAllStream(
 }
 
 /** 多来源聚合搜索（一次性）：基于流式实现，兼容搜索页现有用法 */
-export async function searchAll(opts: { kw?: string; kind: WorkItem['kind']; genre?: string; sort?: string; page?: number }): Promise<{ items: WorkItem[]; failed: string[] }> {
+export async function searchAll(
+  opts: { kw?: string; kind: WorkItem['kind']; genre?: string; sort?: string; page?: number },
+  /** 阶段3第6步：每批到货回调（已 finish）。batch 为**单源增量**批次，非累计 */
+  onUpdate?: (items: WorkItem[]) => void,
+  /** 阶段3第6步：透传给 searchAllStream（respectEnabled / skipUnhealthy / sourceReqPolicy 等） */
+  streamOpts?: StreamOptions,
+): Promise<{ items: WorkItem[]; failed: string[] }> {
   const items: WorkItem[] = []
-  const { failed } = await searchAllStream(opts, (batch) => items.push(...batch))
+  const { failed } = await searchAllStream(
+    opts,
+    (batch) => {
+      items.push(...batch) // batch = 单个来源的增量条目，累加不会重复
+      onUpdate?.(finish(items)) // 每次全量重算：去重 + SOURCE_ORDER 排序 + cover 归一
+    },
+    streamOpts,
+  )
   return { items: finish(items), failed: Object.keys(failed).map((id) => SOURCE_NAMES[id] || id) }
 }
 

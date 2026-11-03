@@ -2,9 +2,9 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
-import { useAsync } from '../../hooks/useAsync'
-import { getSource, dedup, type WorkItem, type Kind, searchAll } from '../../services/sources'
+import type { WorkItem, Kind } from '../../services/sources'
 import { GENRE_MAP } from '../../services/sources/anilist'
+import { pickViewState, useDiscoverFeed } from './useDiscoverFeed'
 
 const SORTS = ['热门', '最新', '评分'] as const
 
@@ -14,14 +14,15 @@ export default function DiscoveryPage() {
   const [genreEn, setGenreEn] = useState<string | null>(null)
   const [sort, setSort] = useState<(typeof SORTS)[number]>('热门')
 
-  const { loading, data, error, retry } = useAsync(
-    async () => {
-      // 有分类 → AniList 精确分类过滤；无分类 → 全源聚合（中文优先）
-      if (genreEn) return getSource('anilist').search({ kind: type, genre: genreEn, sort })
-      return searchAll({ kind: type, sort })
-    },
-    [type, genreEn, sort],
-  )
+  // 阶段3第6步：渐进渲染 + 来源开关 + 健康记忆 + 发现页专用请求策略
+  const { items, loading, error, failed, blocked, retry } = useDiscoverFeed(type, genreEn, sort)
+  const view = pickViewState({
+    blocked,
+    loading,
+    error,
+    failedCount: failed.length,
+    itemCount: items.length,
+  })
 
   const open = (w: WorkItem) => nav(`/detail/${w.sourceId}/${w.kind}/${w.workId}`)
 
@@ -53,12 +54,36 @@ export default function DiscoveryPage() {
       </Section>
 
       <Section title="结果" extra="点击查看详情">
-        {loading && !data ? <Loading /> : error ? (
-          <EmptyState icon="info" title="加载失败" desc={error} actionText="重试" onAction={retry} />
-        ) : data && data.items.length > 0 ? (
-          <div className="work-grid">
-            {dedup(data.items).map((w) => <WorkCard key={w.sourceId + w.workId} w={w} onClick={() => open(w)} />)}
-          </div>
+        {view === 'blocked' && blocked ? (
+          <EmptyState icon="info" title={blocked.title} desc={blocked.message} />
+        ) : view === 'loading' ? (
+          <Loading />
+        ) : view === 'error' ? (
+          <EmptyState icon="info" title="加载失败" desc={error ?? ''} actionText="重试" onAction={retry} />
+        ) : view === 'all-failed' ? (
+          <EmptyState
+            icon="info"
+            title="加载失败"
+            desc={`全部来源请求失败：${failed.join('、')}`}
+            actionText="重试"
+            onAction={retry}
+          />
+        ) : view === 'grid' ? (
+          <>
+            <div className="work-grid">
+              {items.map((w) => <WorkCard key={w.sourceId + w.workId} w={w} onClick={() => open(w)} />)}
+            </div>
+            {loading && (
+              <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginTop: 8 }}>
+                仍在加载其他来源…
+              </div>
+            )}
+            {!loading && failed.length > 0 && (
+              <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginTop: 8 }}>
+                {failed.join('、')} 未返回
+              </div>
+            )}
+          </>
         ) : (
           <EmptyState icon="compass" title="没有找到作品" desc="换个分类或排序试试。" />
         )}

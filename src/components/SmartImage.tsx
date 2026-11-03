@@ -22,9 +22,11 @@ interface Props {
   className?: string
   /** O4 懒加载持有：true 时不渲染 img（不发请求），显示静态色块——进入可视范围后由调用方放开 */
   hold?: boolean
+  /** 首屏关键图（仅详情页主封面）：跳过 lazy 立即请求，并给高优先级 */
+  eager?: boolean
 }
 
-export default function SmartImage({ src, alt = '', fallbackIcon = 'film', className, hold }: Props) {
+export default function SmartImage({ src, alt = '', fallbackIcon = 'film', className, hold, eager }: Props) {
   const [attempt, setAttempt] = useState(0) // 0=首次, 1=重试1次, 2=放弃
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -57,7 +59,8 @@ export default function SmartImage({ src, alt = '', fallbackIcon = 'film', class
             src={src}
             alt={alt}
             className={`${className || ''} ${loaded ? 'is-loaded' : 'is-loading'}`}
-            loading="lazy"
+            loading={eager ? 'eager' : 'lazy'}
+            fetchPriority={eager ? 'high' : undefined}
             decoding="async"
             referrerPolicy="no-referrer"
             onLoad={() => {

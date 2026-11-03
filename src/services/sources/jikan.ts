@@ -1,7 +1,7 @@
 /** Jikan (MyAnimeList) 适配器：免费无 Key，限流 3 req/s → 内部节流 400ms */
 import { cachedGet } from '../api/http'
 import { GENRE_MAP, STATUS_MAP, FORMAT_MAP, stripHtml } from './anilist'
-import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole } from './types'
+import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole, SourceRequestPolicy } from './types'
 
 const BASE = 'https://api.jikan.moe/v4'
 
@@ -12,9 +12,15 @@ async function throttle() {
   lastReq = Date.now()
 }
 
-async function jikanGet(path: string): Promise<any> {
+async function jikanGet(path: string, reqPolicy?: SourceRequestPolicy): Promise<any> {
   await throttle()
-  const text = await cachedGet(BASE + path)
+  const text = await cachedGet(
+    BASE + path,
+    // 只有显式传入策略才覆盖 HTTP 层默认值；不传 → 传空对象 = 原默认行为
+    reqPolicy
+      ? { timeout: reqPolicy.timeoutMs ?? 10000, retries: reqPolicy.retries ?? 1 }
+      : {},
+  )
   return JSON.parse(text)
 }
 
@@ -51,7 +57,8 @@ const jikan: SourceAdapter = {
     p.set('limit', '18')
     p.set('sfw', 'true') // 过滤成人内容
     const path = opts.kind === 'manga' ? `/manga?${p}` : `/anime?${p}`
-    const json = await jikanGet(path)
+    // ★ 阶段3第6步：仅 search 接收策略；下方 getDetail 刻意不传，保持原行为
+    const json = await jikanGet(path, opts.reqPolicy)
     if (json?.error) throw new Error(json.error)
     const items: WorkItem[] = (json?.data || []).map(mapEntry)
     // 跨源统一：Jikan 的分页字段 has_next_page

@@ -79,7 +79,7 @@ export default function DetailPage() {
 
       <div className="detail-hero">
         <div className="dh-cover">
-          <SmartImage src={d.cover} fallbackIcon={d.kind === 'manga' ? 'book' : 'film'} />
+          <SmartImage src={d.cover} eager fallbackIcon={d.kind === 'manga' ? 'book' : 'film'} />
         </div>
         <div className="dh-info">
           <div className="dh-title">{d.title}</div>
