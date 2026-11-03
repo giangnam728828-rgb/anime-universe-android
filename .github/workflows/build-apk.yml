@@ -27,14 +27,25 @@ jobs:
 
       # ★ 播放专项阶段1 · A4 验证(1)：插件依赖安装
       - name: Verify native plugin installed
+        shell: bash
         run: |
+          set -euo pipefail
           echo "== 检查本地插件依赖 =="
-          test -d node_modules/media3-player \
-            || (echo "❌ media3-player 未安装"; exit 1)
-          test -f node_modules/media3-player/android/build.gradle \
-            || (echo "❌ 插件 android/build.gradle 缺失"; exit 1)
-          test -f node_modules/media3-player/android/src/main/java/com/giangnam728828/anime/universe/player/Media3PlayerPlugin.kt \
-            || (echo "❌ Kotlin 插件源缺失"; exit 1)
+          PLUGIN=node_modules/media3-player
+          if [ ! -d "$PLUGIN" ]; then echo "❌ media3-player 未安装"; exit 1; fi
+          echo "--- 插件目录 ---"
+          ls -la "$PLUGIN"
+          if [ ! -f "$PLUGIN/android/build.gradle" ]; then
+            echo "❌ 插件 android/build.gradle 缺失"
+            echo "--- 插件目录完整结构 ---"
+            find "$PLUGIN" -maxdepth 5 | sort
+            echo "--- npm 版本 ---"; npm --version
+            echo "--- 源目录是否有 build.gradle ---"
+            ls -la native-plugins/media3-player/android/ || true
+            exit 1
+          fi
+          KT="$PLUGIN/android/src/main/java/com/giangnam728828/anime/universe/player/Media3PlayerPlugin.kt"
+          if [ ! -f "$KT" ]; then echo "❌ Kotlin 插件源缺失"; find "$PLUGIN/android" -name '*.kt'; exit 1; fi
           echo "✅ media3-player 依赖安装正确"
 
       - name: Inject embedded translation key
