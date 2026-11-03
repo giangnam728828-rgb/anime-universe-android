@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
@@ -24,12 +24,45 @@ export default function SearchPage() {
   const load = useCallback(() => { getSearchHistory().then(setHistory) }, [])
   useEffect(() => { load() }, [load])
 
+  // ── UX-1：搜索键盘自动收起 ──
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  /**
+   * 唯一收键盘出口。
+   * ★ 无 DOM 句柄（已卸载）时静默忽略，绝不抛错。
+   * ★ 必须是同步调用，且发生在可能触发重渲染的 doSearch 之前。
+   */
+  const dismissKeyboard = () => {
+    inputRef.current?.blur()
+  }
+
   const doSearch = (text?: string, sc?: Scope) => {
     const kw = (text ?? c.q).trim()
     if (!kw) return
     if (sc) c.setScope(sc)
     c.runNow(kw, sc ?? c.scope)
     void addSearchHistory(kw).then(load)
+  }
+
+  /** 按钮路径：先收键盘，再搜索（顺序固定，不可调换） */
+  const handleSearchClick = () => {
+    dismissKeyboard()
+    doSearch()
+  }
+
+  /**
+   * 键盘路径：先处理输入法组合态，再收键盘，最后搜索。
+   * ★ isComposing：中文输入法中 Enter 用于"确认候选词"，此时不得提交搜索。
+   * ★ 非 Enter 直接返回，不干扰其他按键。
+   * ★ preventDefault 放在组合态判断之后，避免吞掉输入法的候选确认。
+   */
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return
+    if (e.nativeEvent.isComposing) return
+
+    e.preventDefault()
+    dismissKeyboard()
+    doSearch()
   }
 
   /** 点击聚合组：进入首来源的现有详情页（aggId 不是作品 ID） */
@@ -71,12 +104,14 @@ export default function SearchPage() {
 
       <div className="search-bar">
         <input
+          ref={inputRef}
           placeholder="输入作品或资讯关键词…"
           value={c.q}
+          enterKeyHint="search"
           onChange={(e) => c.setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && doSearch()}
+          onKeyDown={handleKeyDown}
         />
-        <button className="go" onClick={() => doSearch()}>搜索</button>
+        <button className="go" onClick={handleSearchClick}>搜索</button>
       </div>
 
       <Section title="搜索范围">
