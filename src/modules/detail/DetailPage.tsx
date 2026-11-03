@@ -7,7 +7,7 @@ import { getSource, SOURCE_NAMES, type Kind, type WorkDetail } from '../../servi
 import SourceBadge from '../../components/SourceBadge'
 import SmartImage from '../../components/SmartImage'
 import { isFavorited, toggleFavorite } from '../../database/db'
-import { peek, type RouteIdentity } from './searchSession'
+import { createToken, peek, type EntrySnapshot, type RouteIdentity } from './searchSession'
 
 export const favKeyOf = (sourceId: string, kind: string, workId: string) => `${sourceId}-${kind}-${workId}`
 
@@ -43,6 +43,20 @@ export default function DetailPage() {
       ) ?? [],
     [ctxEntries, sourceId, kind, workId],
   )
+
+  /**
+   * 阶段3-5b：点击「其他来源」跳转到该来源的详情页。
+   * ★ 必须把**完整 ctxEntries**（含当前页自身）作为新上下文传下去，
+   *   否则目标页的「其他来源」里会看不到刚刚离开的那一个来源。
+   * ★ 令牌重新颁发（绑定目标 route）；由于存储是有界多令牌，
+   *   本页令牌不会被覆盖，返回本页时上下文仍在。
+   */
+  const onPickOther = (target: EntrySnapshot) => {
+    if (!ctxEntries) return
+    const route = { sourceId: target.sourceId, kind: target.kind, workId: target.workId }
+    const token = createToken(ctxEntries, route)
+    nav(`/detail/${target.sourceId}/${target.kind}/${target.workId}`, { state: { ctx: token } })
+  }
 
   useEffect(() => {
     isFavorited(favKeyOf(sourceId, kind, workId)).then(setFav)
@@ -106,18 +120,26 @@ export default function DetailPage() {
         <div className="info-item"><div className="il">数据来源</div><div className="iv"><SourceBadge sourceId={d.sourceId} /></div></div>
       </div>
 
-      {/* 阶段3-5a：其他来源（纯展示，不可点击；不发起任何反查） */}
+      {/* 阶段3-5a 展示 / 阶段3-5b 可点击跳转；仍不发起任何反查（留给 3-5c） */}
       <Section title="其他来源">
         {otherEntries.length > 0 ? (
           <div className="rows">
             {otherEntries.map((e) => (
-              <div key={`${e.sourceId}\u0000${e.kind}\u0000${e.workId}`} className="row-item" style={{ width: '100%' }}>
+              <button
+                key={`${e.sourceId}\u0000${e.kind}\u0000${e.workId}`}
+                className="row-item"
+                style={{ width: '100%', textAlign: 'left', background: 'none', border: 0, cursor: 'pointer' }}
+                onClick={() => onPickOther(e)}
+              >
                 <span className="rmain">
                   {/* 标题缺失时退回来源名称，绝不借用其他来源的标题 */}
                   <div className="rtitle">{e.title.trim() || (SOURCE_NAMES[e.sourceId] ?? e.sourceId)}</div>
                   <div className="rdesc"><SourceBadge sourceId={e.sourceId} /></div>
                 </span>
-              </div>
+                <span style={{ display: 'flex', transform: 'rotate(180deg)', color: 'var(--muted)' }}>
+                  <Icon name="chevron" size={15} />
+                </span>
+              </button>
             ))}
           </div>
         ) : (

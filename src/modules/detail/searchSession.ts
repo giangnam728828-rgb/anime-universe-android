@@ -1,8 +1,11 @@
 /**
  * 阶段3-5a · 搜索结果 → 详情页的会话级上下文桥接
  *
- * 设计要点（已通过设计审查）：
- *  - **单槽**：同一时刻只保留一个上下文，新令牌必然覆盖旧令牌
+ * 设计要点：
+ *  - **有界多令牌（阶段3第5b子步）**：最多同时存活 MAX_TOKENS 个上下文。
+ *    每个令牌代表**一次独立的导航上下文**，即使两个令牌绑定同一 route 也**独立并存**，
+ *    因此支持 A→B→A 这类返回导航（同作品在历史中出现多次，各有各的上下文）。
+ *    容量满时**只按最小 insertSeq** 淘汰最旧令牌，route **不参与**淘汰决策。
  *  - **令牌 + 路由三元组 + TTL 三重校验**，任一不满足即视为无上下文
  *  - **peek() 纯读取**：不消费、不修改任何模块状态，因此不受 React 18
  *    StrictMode 的 setup→cleanup→setup 双调用影响（本模块刻意不提供 consume / clear）
@@ -38,13 +41,19 @@ interface SessionSlot {
   entries: readonly EntrySnapshot[]
   route: Readonly<RouteIdentity>
   createdAt: number
+  /** 单调递增写入序号。仅用于容量淘汰，判定结果与系统时间无关 */
+  insertSeq: number
 }
 
 /** 上下文有效期：30 秒。过期保护，不是主要身份校验手段 */
 export const CTX_TTL_MS = 30_000
 
-/** 单槽存储 */
-let slot: SessionSlot | null = null
+/** 容量上限：最多同时存活 8 个上下文令牌 */
+const MAX_TOKENS = 8
+/** 令牌 -> 槽。Map 保持插入顺序；淘汰另按 insertSeq 判定（不依赖时间戳） */
+const slots = new Map<string, SessionSlot>()
+/** 写入计数器：保证 insertSeq 单调且永不并列 */
+let insertCounter = 0
 /** 上一个发出的令牌，用于保证新旧必异 */
 let lastToken: string | null = null
 /** 退化兜底用的单调计数器 */
@@ -89,27 +98,70 @@ function newToken(): string {
   return forced
 }
 
+/**
+ * 令牌快照的可接受输入：
+ *  - `SourceEntry`     ：搜索页聚合结果（字段超集，含 item/genres/matchKey 等）
+ *  - `EntrySnapshot`   ：详情页链路里 peek 出来的快照（只有 5 个身份字段）
+ * 两者都以**顶层** sourceId/kind/workId/title/titleNative 承载身份信息，
+ * 因此只需读取这 5 个共有字段即可归一化，不需要任何 `as` 断言。
+ */
+export type EntryInput = SourceEntry | EntrySnapshot
+export type EntryInputList = readonly EntryInput[]
+
+/**
+ * 归一化为 EntrySnapshot（复制 + 冻结）。
+ * 含运行时最小校验：身份字段非法时**抛错**而不是静默产出脏快照。
+ */
+function toSnapshot(e: EntryInput): EntrySnapshot {
+  if (
+    typeof e?.sourceId !== 'string' ||
+    typeof e.workId !== 'string' ||
+    (e.kind !== 'anime' && e.kind !== 'manga')
+  ) {
+    throw new TypeError('createToken: 非法条目')
+  }
+  return Object.freeze({
+    sourceId: e.sourceId,
+    kind: e.kind,
+    workId: e.workId,
+    title: typeof e.title === 'string' ? e.title : '',
+    titleNative: typeof e.titleNative === 'string' ? e.titleNative : undefined,
+  })
+}
+
 /** 复制 + 逐个冻结，返回运行时不可变的快照数组 */
-function freezeEntries(src: readonly SourceEntry[]): readonly EntrySnapshot[] {
-  const copy = src.map((e) =>
-    Object.freeze({
-      sourceId: e.sourceId,
-      kind: e.kind,
-      workId: e.workId,
-      title: e.title ?? '',
-      titleNative: e.titleNative,
-    }),
-  )
-  return Object.freeze(copy)
+function freezeEntries(src: EntryInputList): readonly EntrySnapshot[] {
+  return Object.freeze(src.map(toSnapshot))
 }
 
 /**
- * 创建（或覆盖）单槽令牌。
- * 无条件覆盖旧槽：旧令牌在本次调用后立即失效。
+ * 容量淘汰：仅在写满时按最小 insertSeq 删除最旧令牌。
+ * **route 完全不参与淘汰判定** —— 同一 route 的多个令牌必须独立存活，
+ * 否则 A→B→A 的返回导航会丢失先前页面的上下文。
  */
-export function createToken(srcEntries: readonly SourceEntry[], route: RouteIdentity): string {
+function evictIfNeeded(): void {
+  while (slots.size >= MAX_TOKENS) {
+    let oldestKey: string | null = null
+    let oldestSeq = Infinity
+    for (const [k, v] of slots) {
+      if (v.insertSeq < oldestSeq) {
+        oldestSeq = v.insertSeq
+        oldestKey = k
+      }
+    }
+    if (oldestKey === null) break
+    slots.delete(oldestKey)
+  }
+}
+
+/**
+ * 创建令牌并写入有界存储（阶段3第5b子步）。
+ * 不影响任何其他令牌：不同令牌即使绑定同一 route 也各自独立存活。
+ * 只有容量（MAX_TOKENS）与 TTL 会让上下文失效。
+ */
+export function createToken(srcEntries: EntryInputList, route: RouteIdentity): string {
   const token = newToken()
-  slot = {
+  const snap: SessionSlot = Object.freeze({
     token,
     entries: freezeEntries(srcEntries),
     // ★ 复制 + 冻结：不保存调用方传入的引用
@@ -119,22 +171,26 @@ export function createToken(srcEntries: readonly SourceEntry[], route: RouteIden
       workId: route.workId,
     }),
     createdAt: Date.now(),
-  }
+    insertSeq: insertCounter++,
+  })
+  evictIfNeeded()
+  slots.set(token, snap)
   return token
 }
 
 /**
- * 纯读取校验。顺序固定：参数 → 槽存在 → token → route 三元组 → TTL。
- * 任何一步失败返回 null，且**不清理**有效上下文。
+ * 纯读取校验。顺序固定：参数 → 令牌精确命中 → route 三元组 → TTL。
+ * 任何一步失败返回 null，且**不消费、不删除、不修改**任何模块状态。
+ *
+ * ★ token 是第一索引：两个绑定同一 route 的令牌各读各的快照，绝不会互相读到对方。
  */
 export function peek(
   token: string | undefined | null,
   route: RouteIdentity,
 ): readonly EntrySnapshot[] | null {
   if (!token) return null
-  const s = slot
-  if (!s) return null
-  if (s.token !== token) return null
+  const s = slots.get(token)
+  if (!s) return null // 令牌不存在 / 已被容量淘汰
   if (
     s.route.sourceId !== route.sourceId ||
     s.route.kind !== route.kind ||
@@ -146,4 +202,13 @@ export function peek(
   if (age < 0 || age > CTX_TTL_MS) return null // ★ 负时间差（系统时间回拨）同样拒绝
   // 返回隔离副本：内部对象已冻结，共享 entry 引用安全，但数组是新引用
   return Object.freeze(s.entries.slice())
+}
+
+/**
+ * 仅供测试读取当前存活令牌数。
+ * 只返回数量，**不暴露 Map、令牌内容或任何内部对象**，也不提供任何修改入口。
+ * 生产业务代码不得调用。
+ */
+export function __tokenCount(): number {
+  return slots.size
 }
