@@ -219,11 +219,24 @@ export function yearCorroborates(a: SourceEntry, b: SourceEntry): boolean | 'na'
  *  三级 —— 年份佐证：相等则强通过；明确不等则**拒绝**；无法佐证则放行
  */
 export function pairMatch(a: SourceEntry, b: SourceEntry): boolean {
+  // ★ Q6 裁定（来源隔离）：Bangumi 与其他来源「同名也不同组」。
+  //   Bangumi 是中文元数据目录，其作品身份体系与 AniList/B站/MangaDex 互不相通，
+  //   仅凭标题规范化相等就合并会造成错误归并，并让 SOURCE_ORDER=0 的 Bangumi
+  //   改写其他来源的展示字段（title/cover/score）。
+  //   故跨来源一律不匹配；Bangumi 条目之间仍走下列常规规则
+  //   （不扩大既有跨来源合并范围，其他来源彼此的合并行为完全不变）。
+  if (isBangumiSource(a.sourceId) !== isBangumiSource(b.sourceId)) return false
   if (a.matchKey !== b.matchKey) return false
   if (isExcluded(a, b)) return false
   const yc = yearCorroborates(a, b)
   if (yc === 'na') return true
   return yc
+}
+
+/** Bangumi 来源标识（Q6 隔离判定专用） */
+const BANGUMI_SOURCE_ID = 'bangumi'
+function isBangumiSource(sourceId: string): boolean {
+  return sourceId === BANGUMI_SOURCE_ID
 }
 
 // ---------------------------------------------------------------------------

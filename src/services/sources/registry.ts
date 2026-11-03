@@ -15,6 +15,7 @@ import anilist from './anilist'
 import jikan from './jikan'
 import bilibili from './bilibili'
 import mangadex from './mangadex'
+import bangumi from './bangumi'
 import { isSourceEnabled } from './settings'
 
 /**
@@ -22,10 +23,11 @@ import { isSourceEnabled } from './settings'
  * 新增来源在此追加；排名必须为非负唯一整数。
  */
 export const SOURCE_ORDER: Readonly<Record<string, number>> = Object.freeze({
-  bilibili: 0,
-  mangadex: 1,
-  anilist: 2,
-  jikan: 3,
+  bangumi: 0,
+  bilibili: 1,
+  mangadex: 2,
+  anilist: 3,
+  jikan: 4,
 })
 
 /**
@@ -45,7 +47,7 @@ export function rank(sourceId: string): number {
 }
 
 /** 全部来源适配器（不受开关影响；开关过滤见 enabledSources） */
-export const SOURCES: SourceAdapter[] = [bilibili, mangadex, anilist, jikan]
+export const SOURCES: SourceAdapter[] = [bangumi, bilibili, mangadex, anilist, jikan]
 
 /** 来源显示名映射 */
 export const SOURCE_NAMES: Record<string, string> = Object.fromEntries(
