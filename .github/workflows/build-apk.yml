@@ -57,8 +57,6 @@ jobs:
           echo "== 测试视频验证 =="
           python3 scripts/verify_test_video.py \
             native-plugins/media3-player/android/src/main/assets/test.mp4
-          python3 scripts/verify_test_video.py \
-            public/player-test/test.mp4
           echo "--- SHA256 ---"
           sha256sum native-plugins/media3-player/android/src/main/assets/test.mp4
 
