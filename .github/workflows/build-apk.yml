@@ -391,13 +391,15 @@ jobs:
           python3 - <<'PYEOF'
           import zipfile, sys
           z = zipfile.ZipFile('android/app/build/outputs/apk/release/app-release.apk')
-          # resources.arsc 中必须含自有主题名（证明 res/values/themes.xml 被编译进来）
+          # resources.arsc 的字符串池编码可能是 UTF-8 也可能是 UTF-16，
+          # 两种都探测（不能只假定一种，否则会误报）。来源名以 UTF-8 为主。
           arsc = z.read('resources.arsc')
-          needle = 'Theme.AnimeUniverse.Player'.encode('utf-16-le')
-          if needle in arsc:
-              print('✅ resources.arsc 含 Theme.AnimeUniverse.Player（主题资源已编译进 APK）')
+          name = 'Theme.AnimeUniverse.Player'
+          hit = (name.encode('utf-8') in arsc) or (name.encode('utf-16-le') in arsc)
+          if hit:
+              print(f'✅ resources.arsc 含 {name}（主题资源已编译进 APK）')
           else:
-              print('❌ resources.arsc 未含 Theme.AnimeUniverse.Player —— 主题资源未进入 APK')
+              print(f'❌ resources.arsc 未含 {name} —— 主题资源未进入 APK')
               sys.exit(1)
           PYEOF
 
