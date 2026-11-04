@@ -3,11 +3,22 @@
 
     <!-- 播放专项阶段1：原生播放 Activity（横屏全屏） -->
     <application>
+        <!--
+          ⚠️ 阻断性缺陷修复（2026-11-04）：
+          PlayerActivity 继承 androidx.appcompat.app.AppCompatActivity，
+          必须使用 AppCompat 系主题（或其后代），否则启动即抛
+          IllegalStateException: "You need to use a Theme.AppCompat theme..."。
+          原写法 @android:style/Theme.Black.NoTitleBar.Fullscreen 是系统原生主题，
+          不满足该约束 → 崩溃闪退。
+
+          现改为插件自有主题 @style/Theme.AnimeUniverse.Player
+          （定义于 src/main/res/values/themes.xml，继承 Theme.AppCompat.NoActionBar）。
+        -->
         <activity
             android:name=".PlayerActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+            android:theme="@style/Theme.AnimeUniverse.Player" />
     </application>
 
 </manifest>

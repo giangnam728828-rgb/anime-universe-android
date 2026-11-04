@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  播放专项阶段1 —— 阻断性缺陷修复
+  ============================================================
+  缺陷：PlayerActivity 继承 AppCompatActivity，但 Manifest 声明了
+        系统原生主题 @android:style/Theme.Black.NoTitleBar.Fullscreen，
+        导致启动即抛 IllegalStateException（AppCompatDelegateImpl:926）：
+        "You need to use a Theme.AppCompat theme (or descendant) with this activity."
+        → 进程崩溃 → 闪退回桌面。
+
+  修复：定义插件自有主题，继承 AppCompat 的主题（满足 AppCompatActivity 要求），
+        并在此声明全屏窗口属性。
+
+  ⚠️ 事实核实（2026-11-04，解包 appcompat-1.6.1.aar 的 res/values/values.xml 实测）：
+     AppCompat 1.6.1 只提供以下 NoActionBar 主题：
+       - Theme.AppCompat.NoActionBar
+       - Theme.AppCompat.Light.NoActionBar
+       - Theme.AppCompat.DayNight.NoActionBar
+     ❌ 不存在 Theme.AppCompat.NoActionBar.Fullscreen 变体，
+     因此不可直接引用该名称，必须像本文件这样自行定义。
+  ============================================================
+-->
+<resources>
+
+    <!-- 全屏无标题主题：继承 AppCompat NoActionBar，叠加真正的全屏窗口属性 -->
+    <style name="Theme.AnimeUniverse.Player" parent="Theme.AppCompat.NoActionBar">
+        <!-- 无标题栏 + 无 ActionBar（父主题已设 windowNoTitle=true，此处显式重申） -->
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+
+        <!-- 全屏窗口属性（声明式，与 PlayerActivity.onCreate 的
+             WindowInsetsControllerCompat 代码式隐藏互为双保险） -->
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+
+        <!-- 窗口背景纯黑，避免启动瞬间闪白 -->
+        <item name="android:windowBackground">@android:color/black</item>
+
+        <!-- 播放器场景不需要系统栏对比度遮罩 -->
+        <item name="android:windowDrawsSystemBarBackgrounds">false</item>
+    </style>
+
+</resources>

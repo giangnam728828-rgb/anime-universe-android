@@ -304,7 +304,103 @@ jobs:
               print('可用字符串:', [s for s in strs if 'Activity' in s])
               sys.exit(1)
           print(f'✅ 合并后的 Manifest 已注册 {target}')
+
+          # ★ 阻断性缺陷修复守卫（2026-11-04）
+          #   主题属性在 AXML 中以「资源 ID」存储，不是字符串 —— 必须按 ID 判定：
+          #     package 0x01 = android 框架资源（系统主题）→ 会触发 AppCompat 崩溃
+          #     package 0x7f = 应用自有资源        （正确）
+          #   旧错误写法 @android:style/Theme.Black.NoTitleBar.Fullscreen = 0x0103000a
+          def parse_axml(data):
+              off, pool, elems, guard = 8, [], [], 0
+              while off + 8 <= len(data) and guard < 50000:
+                  guard += 1
+                  ctype, header_size, csize = struct.unpack('<HHI', data[off:off+8])
+                  if csize < 8 or off + csize > len(data):
+                      break
+                  if ctype == 0x0001:
+                      scount, _st, flags, sstart, _ = struct.unpack('<IIIII', data[off+8:off+28])
+                      utf8 = bool(flags & (1 << 8))
+                      offs = [struct.unpack('<I', data[off+28+i*4:off+32+i*4])[0] for i in range(scount)]
+                      base = off + sstart
+                      for o in offs:
+                          p = base + o
+                          if p >= len(data):
+                              pool.append(''); continue
+                          if utf8:
+                              n = data[p]; p += 1
+                              if n & 0x80:
+                                  n = ((n & 0x7f) << 8) | data[p]; p += 1
+                              n2 = data[p]; p += 1
+                              if n2 & 0x80:
+                                  n2 = ((n2 & 0x7f) << 8) | data[p]; p += 1
+                              pool.append(data[p:p+n2].decode('utf-8', 'replace'))
+                          else:
+                              n = struct.unpack('<H', data[p:p+2])[0]; p += 2
+                              if n & 0x8000:
+                                  n = ((n & 0x7fff) << 16) | struct.unpack('<H', data[p:p+2])[0]; p += 2
+                              pool.append(data[p:p+n*2].decode('utf-16-le', 'replace'))
+                  elif ctype == 0x0102:  # START_ELEMENT
+                      _ns, _nm = struct.unpack('<II', data[off+16:off+24])
+                      attr_start, _asz, attr_count = struct.unpack('<HHH', data[off+24:off+30])
+                      aoff = off + 16 + attr_start
+                      attrs = []
+                      for _ in range(attr_count):
+                          if aoff + 20 > len(data):
+                              break
+                          ans, anm, araw, atyp, adata = struct.unpack('<IIIiI', data[aoff:aoff+20])
+                          attrs.append({
+                              'name': pool[anm] if anm < len(pool) else '',
+                              'raw': pool[araw] if (araw != 0xFFFFFFFF and araw < len(pool)) else None,
+                              'type': atyp, 'data': adata,
+                          })
+                          aoff += 20
+                      elems.append({'name': pool[_nm] if _nm < len(pool) else '', 'attrs': attrs})
+                  off += csize
+              return elems
+
+          elems = parse_axml(z.read('AndroidManifest.xml'))
+          found = False
+          for e in elems:
+              if e['name'] != 'activity':
+                  continue
+              nm = next((a['raw'] for a in e['attrs'] if a['name'] == 'name' and a['raw']), '')
+              if 'PlayerActivity' not in str(nm):
+                  continue
+              found = True
+              th = next((a for a in e['attrs'] if a['name'] == 'theme'), None)
+              if th is None:
+                  print('❌ PlayerActivity 未声明 theme 属性')
+                  sys.exit(1)
+              data_v, typ = th['data'], th['type']
+              pkg = (data_v >> 24) & 0xFF
+              print(f'    theme: raw={th["raw"]!r} type=0x{typ:x} id=0x{data_v:08x} package=0x{pkg:02x}')
+              if th['raw'] is not None and 'Theme.AnimeUniverse.Player' in str(th['raw']):
+                  print('✅ PlayerActivity 主题指向自有主题 Theme.AnimeUniverse.Player')
+              elif pkg == 0x7F:
+                  print('✅ PlayerActivity 主题为应用自有资源（package 0x7f，非系统主题）')
+              else:
+                  print(f'❌ PlayerActivity 主题仍指向系统框架资源 0x{data_v:08x}（会导致 AppCompat 崩溃）')
+                  print('   预期：应用自有主题（package 0x7f）')
+                  sys.exit(1)
+          if not found:
+              print('❌ 未在合并 Manifest 中找到 PlayerActivity 节点')
+              sys.exit(1)
           PYEOF
+
+          echo "== 检查自有主题资源已进入 APK 资源表 =="
+          python3 - <<'PYEOF'
+          import zipfile, sys
+          z = zipfile.ZipFile('android/app/build/outputs/apk/release/app-release.apk')
+          # resources.arsc 中必须含自有主题名（证明 res/values/themes.xml 被编译进来）
+          arsc = z.read('resources.arsc')
+          needle = 'Theme.AnimeUniverse.Player'.encode('utf-16-le')
+          if needle in arsc:
+              print('✅ resources.arsc 含 Theme.AnimeUniverse.Player（主题资源已编译进 APK）')
+          else:
+              print('❌ resources.arsc 未含 Theme.AnimeUniverse.Player —— 主题资源未进入 APK')
+              sys.exit(1)
+          PYEOF
+
           echo "== 检查测试素材进入 APK =="
           python3 -c "
           import zipfile,sys
