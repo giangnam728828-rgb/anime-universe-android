@@ -208,57 +208,12 @@ class PlayerActivity : AppCompatActivity() {
     /**
      * 错误码映射（用户 A5 裁定 + v2 修订）
      *
-     * ★ v2 原则：
-     *  - 优先按 Media3 原始 errorCode 分类，不靠错误文案猜测
-     *  - 「素材不存在」不再冒充 URL 格式错误 → MEDIA_RESOURCE_NOT_FOUND
-     *  - 「容器损坏/格式异常」独立为 → MEDIA_FORMAT_INVALID
-     *  - 不把所有 IO 错误都归类为「资源不存在」
-     *
-     * 用户批准的映射表：
-     *   ERROR_CODE_IO_FILE_NOT_FOUND            → MEDIA_RESOURCE_NOT_FOUND
-     *   ERROR_CODE_PARSING_CONTAINER_MALFORMED   → MEDIA_FORMAT_INVALID
-     *   ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED → MEDIA_FORMAT_INVALID
-     *   ERROR_CODE_DECODER_INIT_FAILED           → DECODER_FAILED
-     *   ERROR_CODE_DECODING_FAILED               → DECODER_FAILED
-     *   ERROR_CODE_DECODING_FORMAT_UNSUPPORTED   → DECODER_FAILED
+     * ★ 实现已抽取到 PlaybackErrorMapper（纯 JVM 对象），
+     *   以便 T1-F 可做真实 Kotlin 单元测试。
+     *   映射规则与 v2 完全一致，此处仅做委托。
      */
-    private fun mapError(e: PlaybackException): Pair<String, String> {
-        val detail = e.javaClass.simpleName
-        return when (e.errorCode) {
-            // ★ 资源不存在（APK 内素材缺失等）
-            PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ->
-                "MEDIA_RESOURCE_NOT_FOUND" to "本地播放资源不存在: $detail"
-
-            // ★ 容器 / 清单格式无法解析
-            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
-            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
-            PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED ->
-                "MEDIA_FORMAT_INVALID" to "媒体文件格式异常: $detail"
-
-            // ★ 解码失败
-            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-            PlaybackException.ERROR_CODE_DECODING_FAILED,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
-                "DECODER_FAILED" to "视频解码失败: $detail"
-
-            // 网络类（阶段2/3 用；本阶段 asset 不会走到）
-            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
-            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
-                "MEDIA_LOAD_FAILED" to "网络加载失败: $detail"
-
-            // ★ 其它 IO 错误：保持 MEDIA_LOAD_FAILED，不冒充「资源不存在」
-            PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
-            PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
-            PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE ->
-                "MEDIA_LOAD_FAILED" to "本地资源读取失败: $detail"
-
-            else ->
-                "MEDIA_LOAD_FAILED" to "播放失败: $detail"
-        }
-    }
+    private fun mapError(e: PlaybackException): Pair<String, String> =
+        PlaybackErrorMapper.map(e.errorCode, e.javaClass.simpleName)
 
     // ---- 事件回传（仅主线程） ----
     private fun emitState(state: String, pos: Long, dur: Long) {

@@ -222,6 +222,63 @@ jobs:
           sed -i 's|gradle-8.2.1-all.zip|gradle-8.9-all.zip|' gradle/wrapper/gradle-wrapper.properties
           grep distributionUrl gradle/wrapper/gradle-wrapper.properties
 
+      # ★ 播放专项阶段1 · T1-F / T1-G：真实 Kotlin JVM 单元测试
+      #   ★ 这些是在 JVM 上真实执行 PlaybackUriValidator / PlaybackErrorMapper，
+      #     不是等价移植测试。
+      - name: Run Kotlin unit tests (T1-F / T1-G)
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew :media3-player:testDebugUnitTest --no-daemon --info
+
+      - name: Report Kotlin unit test results (T1-F / T1-G)
+        if: always()
+        run: |
+          echo "== T1-F / T1-G Kotlin 单元测试结果 =="
+          python3 - <<'PYEOF'
+          import glob, sys, xml.etree.ElementTree as ET
+          files = glob.glob(
+              'android/media3-player/build/test-results/testDebugUnitTest/*.xml'
+          ) + glob.glob(
+              'android/**/media3-player/build/test-results/testDebugUnitTest/*.xml'
+          ) + glob.glob(
+              '**/media3-player/build/test-results/testDebugUnitTest/*.xml'
+          )
+          files = sorted(set(files))
+          if not files:
+              print('❌ 未找到测试结果 XML —— Kotlin 单元测试未执行')
+              sys.exit(1)
+
+          total = fail = err = skip = 0
+          for f in files:
+              root = ET.parse(f).getroot()
+              t = int(root.get('tests', 0)); fl = int(root.get('failures', 0))
+              e = int(root.get('errors', 0)); sk = int(root.get('skipped', 0))
+              total += t; fail += fl; err += e; skip += sk
+              status = '✅' if (fl == 0 and e == 0) else '❌'
+              print(f'{status} {root.get("name")}: tests={t} failures={fl} errors={e} skipped={sk}')
+              for tc in root.iter('testcase'):
+                  bad = tc.find('failure') is not None or tc.find('error') is not None
+                  print(f'     {"❌" if bad else "✅"} {tc.get("name")}')
+
+          print(f'\n汇总: 共 {total} 项, 失败 {fail}, 错误 {err}, 跳过 {skip}')
+          if fail or err:
+              print('❌ Kotlin 单元测试未全部通过')
+              sys.exit(1)
+          if total == 0:
+              print('❌ 测试数为 0，视为未验证')
+              sys.exit(1)
+          print('✅ T1-F / T1-G Kotlin 单元测试全部通过（真实 JVM 执行）')
+          PYEOF
+
+      - name: Upload Kotlin test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-unit-test-reports
+          path: '**/media3-player/build/reports/tests/testDebugUnitTest/**'
+          if-no-files-found: warn
+
       - name: Build Release APK (fixed signature)
         run: |
           cd android

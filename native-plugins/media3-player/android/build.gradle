@@ -35,6 +35,18 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+
+    // ★ T1-F / T1-G：允许真实 Kotlin JVM 单元测试（PlaybackUriValidator 为纯 JVM 类）
+    testOptions {
+        unitTests {
+            returnDefaultValues = true
+        }
+    }
+}
+
+dependencies {
+    // 真实 Kotlin 单元测试（在 CI 的 :media3-player:testDebugUnitTest 执行）
+    testImplementation 'junit:junit:4.13.2'
 }
 
 repositories {
