@@ -23,7 +23,21 @@ import { clearSession, setPlaybackState } from '../../services/playback/Playback
 import type { PlaybackErrorCode, PlaybackState } from '../../services/playback/types'
 
 /** 阶段1 自检素材：随插件源码入库的自制测试视频（见 native-plugins/media3-player/android/src/main/assets） */
-const SELF_TEST_ASSET = 'player-test/test.mp4'
+const SELF_TEST_ASSET = 'test.mp4'
+
+/**
+ * ★ v2 裁定：APK 内置素材必须使用 `asset:///` URI（Media3 AssetDataSource）。
+ *
+ * 禁止使用 `window.location.origin`：
+ *   本项目 capacitor.config.ts 设 androidScheme='https'，
+ *   window.location.origin === 'https://localhost'，
+ *   该地址只在 WebView 内部可达，**原生进程无法访问**，
+ *   会使 Media3 走 DefaultHttpDataSource 发起真实网络请求并失败
+ *   （这正是上一轮 MEDIA_LOAD_FAILED「网络加载失败」的根因）。
+ *
+ * APK 内路径 assets/test.mp4 ↔ URI asset:///test.mp4
+ */
+const SELF_TEST_ASSET_URI = `asset:///${SELF_TEST_ASSET}`
 
 export function PlayerPage() {
   const { sourceId, workId, episodeId } = useParams<{
@@ -90,8 +104,9 @@ export function PlayerPage() {
         sourceId: sourceId ?? 'selftest',
         workId: workId ?? 'selftest',
         episodeId: episodeId ?? '1',
-        // 打包进 APK 的本地素材（与插件源码一同入库，CI 后仍在）
-        url: `${window.location.origin}/${SELF_TEST_ASSET}`,
+        // ★ v2：显式声明为 APK 内置资源，使用 asset:/// scheme
+        url: SELF_TEST_ASSET_URI,
+        uriKind: 'asset',
         title: '阶段1 自检素材',
       })
     } catch (e) {

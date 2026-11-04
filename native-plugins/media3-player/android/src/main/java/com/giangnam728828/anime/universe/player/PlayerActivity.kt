@@ -35,16 +35,24 @@ class PlayerActivity : AppCompatActivity() {
         private const val EXTRA_URL = "url"
         private const val EXTRA_EPISODE = "episodeId"
         private const val EXTRA_TITLE = "title"
+        private const val EXTRA_URI_KIND = "uriKind"
 
         /** 静态停止信号：插件 stop() 调用 */
         @Volatile
         private var stopRequested = false
 
-        fun newIntent(ctx: Context, url: String, episodeId: String, title: String): Intent =
+        fun newIntent(
+            ctx: Context,
+            url: String,
+            episodeId: String,
+            title: String,
+            uriKind: String,
+        ): Intent =
             Intent(ctx, PlayerActivity::class.java).apply {
                 putExtra(EXTRA_URL, url)
                 putExtra(EXTRA_EPISODE, episodeId)
                 putExtra(EXTRA_TITLE, title)
+                putExtra(EXTRA_URI_KIND, uriKind)
             }
 
         fun requestStop() {
@@ -69,14 +77,19 @@ class PlayerActivity : AppCompatActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
 
-        // 2) 取参数（★ 不写日志）
+        // 2) 取参数（★ 不写日志、不回显 url）
         val url = intent.getStringExtra(EXTRA_URL)
         val episodeId = intent.getStringExtra(EXTRA_EPISODE) ?: ""
-        if (url.isNullOrBlank()) {
-            emitError("INVALID_MEDIA_URL", "播放地址为空")
+        val uriKindRaw = intent.getStringExtra(EXTRA_URI_KIND)
+
+        // ★ v2：Activity 侧再次校验（不信任上游，双保险）
+        val v = PlaybackUriValidator.validate(url, uriKindRaw)
+        if (!v.ok) {
+            emitError("INVALID_MEDIA_URL", v.reason)
             finish()
             return
         }
+        val uriKind = v.uriKind
 
         // 3) 初始化播放器
         val p = try {
@@ -125,7 +138,8 @@ class PlayerActivity : AppCompatActivity() {
 
             override fun onPlayerError(error: PlaybackException) {
                 val (code, msg) = mapError(error)
-                Log.e(TAG, "播放错误 $code")
+                // ★ 记录原始 Media3 错误码名（不含 url / 签名参数，便于以后排查）
+                Log.e(TAG, "播放错误 $code (raw=${error.errorCodeName})")
                 emitError(code, msg)
             }
         })
@@ -135,7 +149,7 @@ class PlayerActivity : AppCompatActivity() {
             p.setMediaItem(MediaItem.fromUri(url))
             p.prepare()
             p.playWhenReady = true
-            Log.i(TAG, "开始播放 episodeId=$episodeId")
+            Log.i(TAG, "开始播放 episodeId=$episodeId uriKind=$uriKind")
         } catch (e: Exception) {
             Log.e(TAG, "媒体加载失败: ${e.javaClass.simpleName}")
             emitError("MEDIA_LOAD_FAILED", "媒体加载失败: ${e.javaClass.simpleName}")
@@ -185,22 +199,56 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    /** 错误码映射（用户 A5 裁定） */
+    /**
+     * 错误码映射（用户 A5 裁定 + v2 修订）
+     *
+     * ★ v2 原则：
+     *  - 优先按 Media3 原始 errorCode 分类，不靠错误文案猜测
+     *  - 「素材不存在」不再冒充 URL 格式错误 → MEDIA_RESOURCE_NOT_FOUND
+     *  - 「容器损坏/格式异常」独立为 → MEDIA_FORMAT_INVALID
+     *  - 不把所有 IO 错误都归类为「资源不存在」
+     *
+     * 用户批准的映射表：
+     *   ERROR_CODE_IO_FILE_NOT_FOUND            → MEDIA_RESOURCE_NOT_FOUND
+     *   ERROR_CODE_PARSING_CONTAINER_MALFORMED   → MEDIA_FORMAT_INVALID
+     *   ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED → MEDIA_FORMAT_INVALID
+     *   ERROR_CODE_DECODER_INIT_FAILED           → DECODER_FAILED
+     *   ERROR_CODE_DECODING_FAILED               → DECODER_FAILED
+     *   ERROR_CODE_DECODING_FORMAT_UNSUPPORTED   → DECODER_FAILED
+     */
     private fun mapError(e: PlaybackException): Pair<String, String> {
         val detail = e.javaClass.simpleName
         return when (e.errorCode) {
-            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
-                "MEDIA_LOAD_FAILED" to "网络加载失败: $detail"
-            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+            // ★ 资源不存在（APK 内素材缺失等）
             PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ->
-                "MEDIA_LOAD_FAILED" to "资源不可用: $detail"
+                "MEDIA_RESOURCE_NOT_FOUND" to "本地播放资源不存在: $detail"
+
+            // ★ 容器 / 清单格式无法解析
             PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
-            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED ->
-                "INVALID_MEDIA_URL" to "媒体格式无效: $detail"
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED ->
+                "MEDIA_FORMAT_INVALID" to "媒体文件格式异常: $detail"
+
+            // ★ 解码失败
             PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-            PlaybackException.ERROR_CODE_DECODING_FAILED ->
-                "DECODER_FAILED" to "解码失败: $detail"
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+                "DECODER_FAILED" to "视频解码失败: $detail"
+
+            // 网络类（阶段2/3 用；本阶段 asset 不会走到）
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                "MEDIA_LOAD_FAILED" to "网络加载失败: $detail"
+
+            // ★ 其它 IO 错误：保持 MEDIA_LOAD_FAILED，不冒充「资源不存在」
+            PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+            PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
+            PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE ->
+                "MEDIA_LOAD_FAILED" to "本地资源读取失败: $detail"
+
             else ->
                 "MEDIA_LOAD_FAILED" to "播放失败: $detail"
         }

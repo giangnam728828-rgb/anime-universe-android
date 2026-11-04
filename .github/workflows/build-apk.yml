@@ -403,15 +403,131 @@ jobs:
               sys.exit(1)
           PYEOF
 
-          echo "== 检查测试素材进入 APK =="
-          python3 -c "
-          import zipfile,sys
-          z=zipfile.ZipFile('android/app/build/outputs/apk/release/app-release.apk')
-          hit=[n for n in z.namelist() if 'player-test' in n or 'test.mp4' in n]
+          echo "== 检查测试素材进入 APK（v2：必须为原生可读的 assets/test.mp4）=="
+          python3 - <<'PYEOF'
+          import zipfile, sys
+          z = zipfile.ZipFile('android/app/build/outputs/apk/release/app-release.apk')
+          names = z.namelist()
+          hit = [n for n in names if n.endswith('test.mp4')]
           print('素材条目:', hit)
-          if not hit:
-              print('⚠️  未找到测试素材（若仅通过 Web 层加载，可忽略）')
-          "
+
+          # ★ v2 裁定：唯一权威素材 = assets/test.mp4（对应 asset:///test.mp4）
+          REQUIRED = 'assets/test.mp4'
+          if REQUIRED not in names:
+              print(f'❌ APK 内缺少 {REQUIRED}（asset:///test.mp4 将无法读取）')
+              sys.exit(1)
+          size = z.getinfo(REQUIRED).file_size
+          print(f'✅ {REQUIRED} 存在, size={size}')
+
+          # 仅检查大小不够 —— 必须确认含真实可解码视频帧
+          if size < 1024 * 1024:
+              print(f'❌ {REQUIRED} 仅 {size} 字节，疑似空容器（历史踩坑：485 字节）')
+              sys.exit(1)
+          data = z.read(REQUIRED)
+          for box in [b'moov', b'trak', b'stsd', b'avc1', b'mp4a']:
+              if box not in data:
+                  print(f'❌ {REQUIRED} 缺少 MP4 box: {box.decode()}')
+                  sys.exit(1)
+          print(f'✅ {REQUIRED} 含 moov/trak/stsd/avc1/mp4a（真实可解码视频+音轨）')
+          PYEOF
+
+          echo "== 检查前端素材 URI 使用 asset:/// 而非 window.location.origin =="
+          python3 - <<'PYEOF'
+          import re, sys
+          src = open('src/modules/player/PlayerPage.tsx', encoding='utf-8').read()
+
+          if "asset:///" not in src:
+              print('❌ PlayerPage.tsx 未使用 asset:/// URI')
+              sys.exit(1)
+          print("✅ PlayerPage.tsx 使用 asset:/// URI")
+
+          # 素材 URL 不得再依赖 window.location.origin（上一轮崩溃根因）
+          bad_lines = []
+          for i, line in enumerate(src.splitlines(), 1):
+              stripped = line.strip()
+              if stripped.startswith('//') or stripped.startswith('*'):
+                  continue
+              if 'window.location.origin' in stripped:
+                  bad_lines.append((i, stripped))
+          if bad_lines:
+              print('❌ 代码中仍使用 window.location.origin 构造素材地址:')
+              for i, l in bad_lines:
+                  print(f'    line {i}: {l}')
+              sys.exit(1)
+          print('✅ 未在代码中使用 window.location.origin 构造素材地址')
+
+          if not re.search(r"uriKind\s*:\s*'asset'", src):
+              print("❌ 自检调用未声明 uriKind: 'asset'")
+              sys.exit(1)
+          print("✅ 自检调用已声明 uriKind: 'asset'")
+          PYEOF
+
+          echo "== 检查错误码与 URI 校验实现已落地 =="
+          python3 - <<'PYEOF'
+          import sys, os
+          ts = open('native-plugins/media3-player/src/definitions.ts', encoding='utf-8').read()
+          for code in ['MEDIA_RESOURCE_NOT_FOUND', 'MEDIA_FORMAT_INVALID']:
+              if code not in ts:
+                  print(f'❌ definitions.ts 缺少错误码 {code}')
+                  sys.exit(1)
+          print('✅ definitions.ts 含 v2 新增错误码')
+
+          app_ts = open('src/services/playback/types.ts', encoding='utf-8').read()
+          for code in ['MEDIA_RESOURCE_NOT_FOUND', 'MEDIA_FORMAT_INVALID']:
+              if code not in app_ts:
+                  print(f'❌ src/services/playback/types.ts 未同步错误码 {code}')
+                  sys.exit(1)
+          print('✅ 应用侧错误码已同步')
+
+          vp = 'native-plugins/media3-player/android/src/main/java/com/giangnam728828/anime/universe/player/PlaybackUriValidator.kt'
+          if not os.path.isfile(vp):
+              print('❌ 缺少 PlaybackUriValidator.kt')
+              sys.exit(1)
+          vkt = open(vp, encoding='utf-8').read()
+          for token in ['".."', 'URLDecoder', 'ALLOWED_SCHEMES']:
+              if token not in vkt:
+                  print(f'❌ 校验器缺少关键逻辑: {token}')
+                  sys.exit(1)
+          print('✅ URI 校验器含防穿越与白名单逻辑')
+
+          pa = open('native-plugins/media3-player/android/src/main/java/com/giangnam728828/anime/universe/player/PlayerActivity.kt', encoding='utf-8').read()
+          for token in ['ERROR_CODE_IO_FILE_NOT_FOUND', 'MEDIA_RESOURCE_NOT_FOUND',
+                        'ERROR_CODE_PARSING_CONTAINER_MALFORMED', 'MEDIA_FORMAT_INVALID',
+                        'errorCodeName']:
+              if token not in pa:
+                  print(f'❌ PlayerActivity.kt 缺少: {token}')
+                  sys.exit(1)
+          print('✅ PlayerActivity 错误映射含 v2 规则（保留原始 errorCodeName）')
+          PYEOF
+
+          echo "== 检查冻结模块与 AudioFocusHelper 未被修改 =="
+          python3 - <<'PYEOF'
+          import subprocess, sys
+          FROZEN = [
+              'src/services/sources/', 'src/modules/search/',
+              'src/modules/detail/DetailPage.tsx', 'src/modules/news/',
+              'src/modules/reader/', 'src/services/api/', 'src/database/',
+          ]
+          base = subprocess.run(['git', 'rev-parse', 'HEAD~1'],
+                                capture_output=True, text=True).stdout.strip()
+          r = subprocess.run(['git', 'diff', '--name-only', f'{base}..HEAD', '--'] + FROZEN,
+                             capture_output=True, text=True)
+          changed = [x for x in r.stdout.strip().splitlines() if x]
+          if changed:
+              print('❌ 冻结模块被修改:')
+              for c in changed:
+                  print('   ', c)
+              sys.exit(1)
+          print('✅ 冻结模块未被修改')
+
+          afh = 'native-plugins/media3-player/android/src/main/java/com/giangnam728828/anime/universe/player/AudioFocusHelper.kt'
+          r2 = subprocess.run(['git', 'diff', '--name-only', f'{base}..HEAD', '--', afh],
+                              capture_output=True, text=True)
+          if r2.stdout.strip():
+              print('❌ AudioFocusHelper.kt 被修改（用户要求零改动）')
+              sys.exit(1)
+          print('✅ AudioFocusHelper.kt 零改动')
+          PYEOF
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

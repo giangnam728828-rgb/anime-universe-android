@@ -45,11 +45,17 @@ export interface PlaybackSession {
   createdAt: number
 }
 
-/** 与原生侧错误码对齐（用户 A5 裁定） */
+/** 与原生侧错误码对齐（用户 A5 裁定 + v2 修订） */
 export type PlaybackErrorCode =
   | 'PLAYER_INIT_FAILED'
+  /** URI 格式错误，或 scheme 不被允许（含 uriKind 与 scheme 不匹配） */
   | 'INVALID_MEDIA_URL'
+  /** 本地资源读取 IO 失败（非「不存在」的 IO 错误） */
   | 'MEDIA_LOAD_FAILED'
+  /** ★ v2 新增：APK 内置素材不存在 */
+  | 'MEDIA_RESOURCE_NOT_FOUND'
+  /** ★ v2 新增：容器损坏或格式无法解析 */
+  | 'MEDIA_FORMAT_INVALID'
   | 'DECODER_FAILED'
   | 'PLAYER_RELEASE_FAILED'
   | 'ACTIVITY_LAUNCH_FAILED'

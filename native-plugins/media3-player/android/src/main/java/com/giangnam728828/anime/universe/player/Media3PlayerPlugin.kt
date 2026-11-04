@@ -43,26 +43,25 @@ class Media3PlayerPlugin : Plugin() {
      * 打开原生全屏播放界面。
      *
      * ★ url 为临时地址，仅在本次会话内有效。
+     * ★ v2：接收 uriKind 并做严格校验（不单纯信任前端字段）。
      */
     @PluginMethod
     fun open(call: PluginCall) {
         val url = call.getString("url")
         val episodeId = call.getString("episodeId") ?: ""
         val title = call.getString("title") ?: ""
+        val uriKindRaw = call.getString("uriKind")
 
-        // 校验：地址缺失或非法
-        if (url.isNullOrBlank()) {
-            call.reject("INVALID_MEDIA_URL", "播放地址为空")
-            emitError("INVALID_MEDIA_URL", "播放地址为空")
+        // ★ v2 校验：空值 / uriKind 合法性 / scheme 白名单 /
+        //    uriKind 与 scheme 一致性 / asset 路径防穿越
+        val v = PlaybackUriValidator.validate(url, uriKindRaw)
+        if (!v.ok) {
+            call.reject("INVALID_MEDIA_URL", v.reason)
+            emitError("INVALID_MEDIA_URL", v.reason)
             return
         }
-        // 只接受 http(s) 或本地 assets/file 协议，拒绝其它 scheme
-        val scheme = runCatching { java.net.URI(url).scheme?.lowercase() }.getOrNull()
-        if (scheme == null || scheme !in setOf("http", "https", "file", "content", "asset")) {
-            call.reject("INVALID_MEDIA_URL", "不支持的地址协议: ${scheme ?: "无"}")
-            emitError("INVALID_MEDIA_URL", "不支持的地址协议")
-            return
-        }
+        val scheme = v.scheme
+        val uriKind = v.uriKind
 
         val act = activity
         if (act == null) {
@@ -72,10 +71,10 @@ class Media3PlayerPlugin : Plugin() {
         }
 
         try {
-            val intent = PlayerActivity.newIntent(act, url, episodeId, title)
+            val intent = PlayerActivity.newIntent(act, url!!, episodeId, title, uriKind)
             act.startActivity(intent)
-            // ★ 不记录 url 到日志
-            Log.i(TAG, "open(): episodeId=$episodeId scheme=$scheme")
+            // ★ 不记录 url 到日志（只记录类型与 scheme）
+            Log.i(TAG, "open(): episodeId=$episodeId uriKind=$uriKind scheme=$scheme")
             call.resolve(JSObject().put("opened", true))
         } catch (e: Exception) {
             // ★ 异常信息中可能含 url，只记录类型
