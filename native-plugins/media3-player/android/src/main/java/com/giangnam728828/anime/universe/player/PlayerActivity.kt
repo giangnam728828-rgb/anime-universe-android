@@ -90,6 +90,12 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
         val uriKind = v.uriKind
+        // 校验通过后 url 必非空，此处固化为非空类型供后续使用
+        val mediaUrl: String = url ?: run {
+            emitError("INVALID_MEDIA_URL", "播放地址为空")
+            finish()
+            return
+        }
 
         // 3) 初始化播放器
         val p = try {
@@ -146,7 +152,7 @@ class PlayerActivity : AppCompatActivity() {
 
         // 6) 设置媒体源并播放
         try {
-            p.setMediaItem(MediaItem.fromUri(url))
+            p.setMediaItem(MediaItem.fromUri(mediaUrl))
             p.prepare()
             p.playWhenReady = true
             Log.i(TAG, "开始播放 episodeId=$episodeId uriKind=$uriKind")
