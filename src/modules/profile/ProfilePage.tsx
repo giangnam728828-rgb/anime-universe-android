@@ -45,6 +45,13 @@ export default function ProfilePage() {
           <Row icon="settings" title="数据管理" desc="备份 / 恢复本机数据（阶段 2）" wip />
           <Row icon="tool" title="缓存管理" desc="清理图片与请求缓存（阶段 4）" wip />
           <Row icon="tool" title="性能日志（调试）" desc="首页加载各环节计时数据" onClick={() => nav('/perf')} />
+          {/* 播放专项阶段1：临时自检入口，仅用于原生播放器验收（阶段2 移除） */}
+          <Row
+            icon="film"
+            title="播放器自检（调试）"
+            desc="播放专项阶段1 · 原生播放器基础模块"
+            onClick={() => nav('/player/selftest/selftest/1')}
+          />
         </div>
       </Section>
 

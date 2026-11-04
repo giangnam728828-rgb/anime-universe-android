@@ -48,6 +48,20 @@ jobs:
           if [ ! -f "$KT" ]; then echo "❌ Kotlin 插件源缺失"; find "$PLUGIN/android" -name '*.kt'; exit 1; fi
           echo "✅ media3-player 依赖安装正确"
 
+      # ★ 播放专项阶段1：测试视频有效性验证（用户裁定）
+      #   必须确认存在可解码视频帧+音轨，不能是只有容器结构的空 MP4
+      - name: Verify test video is decodable
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== 测试视频验证 =="
+          python3 scripts/verify_test_video.py \
+            native-plugins/media3-player/android/src/main/assets/test.mp4
+          python3 scripts/verify_test_video.py \
+            public/player-test/test.mp4
+          echo "--- SHA256 ---"
+          sha256sum native-plugins/media3-player/android/src/main/assets/test.mp4
+
       - name: Inject embedded translation key
         env:
           TRANS_API_KEY: ${{ secrets.TRANS_API_KEY }}
@@ -191,10 +205,13 @@ jobs:
           s = p.read_text(encoding='utf-8')
           s2 = re.sub(r'minSdkVersion\s*=\s*22', 'minSdkVersion = 23', s)
           # ★ Media3 1.11.1 AAR 元数据要求 minCompileSdk=36
+          # ★ 仅 compileSdk 升 36（Media3 1.11.1 AAR 要求 minCompileSdk=36）
+          #   targetSdk 保持 34（用户裁定，与 Media3 要求无关）
           s2 = re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', s2)
-          s2 = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', s2)
+          # targetSdk 恢复为 34（用户裁定）
+          s2 = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 34', s2)
           p.write_text(s2, encoding='utf-8')
-          print('✅ minSdk 22->23, compileSdk/targetSdk -> 36')
+          print('✅ minSdk 23, compileSdk 36, targetSdk 34')
           PYEOF
           grep -nE "minSdkVersion|compileSdkVersion|targetSdkVersion" android/variables.gradle
 
@@ -241,8 +258,53 @@ jobs:
           print('✅ 插件类已编入 dex')
           PYEOF
           echo "== 检查 APK minSdkVersion =="
-          $ANDROID_HOME/build-tools/34.0.0/aapt2 dump badging \
+          BT=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)
+          "${BT}aapt2" dump badging \
             android/app/build/outputs/apk/release/app-release.apk | grep -E "sdkVersion|targetSdkVersion" || true
+
+          # ★ 合并后 Manifest 必须真正包含 PlayerActivity（AXML 解析，非字节匹配）
+          echo "== 检查合并后的 Manifest 含 PlayerActivity =="
+          python3 - <<'PYEOF'
+          import zipfile, struct, sys
+
+          def string_pool(data):
+              off = 8
+              while off < len(data):
+                  ctype, csize, _ = struct.unpack('<HHI', data[off:off+8])
+                  if ctype == 0x0001:
+                      scount, _, flags, sstart, _ = struct.unpack('<IIIII', data[off+8:off+28])
+                      utf8 = bool(flags & (1 << 8))
+                      offs = [struct.unpack('<I', data[off+28+i*4:off+32+i*4])[0]
+                              for i in range(scount)]
+                      out, base = [], off + sstart
+                      for o in offs:
+                          p = base + o
+                          if utf8:
+                              n = data[p]; p += 1
+                              if n & 0x80:
+                                  n = ((n & 0x7f) << 8) | data[p]; p += 1
+                              n2 = data[p]; p += 1
+                              if n2 & 0x80:
+                                  n2 = ((n2 & 0x7f) << 8) | data[p]; p += 1
+                              out.append(data[p:p+n2].decode('utf-8', 'replace'))
+                          else:
+                              n = struct.unpack('<H', data[p:p+2])[0]; p += 2
+                              if n & 0x8000:
+                                  n = ((n & 0x7fff) << 16) | struct.unpack('<H', data[p:p+2])[0]; p += 2
+                              out.append(data[p:p+n*2].decode('utf-16-le', 'replace'))
+                      return out
+                  off += csize
+              return []
+
+          z = zipfile.ZipFile('android/app/build/outputs/apk/release/app-release.apk')
+          strs = string_pool(z.read('AndroidManifest.xml'))
+          target = 'com.giangnam728828.anime.universe.player.PlayerActivity'
+          if target not in strs:
+              print(f'❌ 合并后的 Manifest 未注册 {target}')
+              print('可用字符串:', [s for s in strs if 'Activity' in s])
+              sys.exit(1)
+          print(f'✅ 合并后的 Manifest 已注册 {target}')
+          PYEOF
           echo "== 检查测试素材进入 APK =="
           python3 -c "
           import zipfile,sys
