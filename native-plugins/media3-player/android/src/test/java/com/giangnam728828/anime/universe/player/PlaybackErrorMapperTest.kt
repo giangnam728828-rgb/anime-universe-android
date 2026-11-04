@@ -166,9 +166,10 @@ class PlaybackErrorMapperTest {
             PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND, detail,
         )
         assertFalse("说明不得包含 URL 片段", msg.contains("http"))
-        assertTrue("说明应含异常类名便于排查", msg.contains(detail))
+        // ★ 注意：这里用 JUnit 的 assertEquals 断言包含关系，避免自定义同名 helper
+        assertEquals(
+            "说明应含异常类名便于排查",
+            true, msg.contains(detail),
+        )
     }
-
-    private fun assertTrue(msg: String, cond: Boolean) =
-        org.junit.Assert.assertTrue(msg, cond)
 }
