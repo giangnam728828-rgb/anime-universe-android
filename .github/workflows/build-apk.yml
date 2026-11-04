@@ -236,7 +236,7 @@ jobs:
         run: |
           echo "== T1-F / T1-G Kotlin 单元测试结果 =="
           python3 - <<'PYEOF'
-          import glob, sys, xml.etree.ElementTree as ET
+          import glob, os, sys, xml.etree.ElementTree as ET
           # ★ Capacitor sync 会把插件复制到 node_modules/media3-player/，
           #   Gradle 实际产物在 node_modules/media3-player/android/build/ 下
           patterns = [
@@ -247,7 +247,8 @@ jobs:
           files = []
           for p in patterns:
               files += glob.glob(p, recursive=True)
-          files = sorted(set(files))
+          # ★ 去重：同一文件可能被多个 pattern 匹配；按 realpath 归一
+          files = sorted({os.path.realpath(f) for f in files})
           if not files:
               print('❌ 未找到测试结果 XML —— Kotlin 单元测试未执行')
               sys.exit(1)
@@ -552,14 +553,27 @@ jobs:
                   sys.exit(1)
           print('✅ URI 校验器含防穿越与白名单逻辑')
 
-          pa = open('native-plugins/media3-player/android/src/main/java/com/giangnam728828/anime/universe/player/PlayerActivity.kt', encoding='utf-8').read()
+          # Activity 错误映射必须含 v2 映射（实现已抽取至 PlaybackErrorMapper）
+          pem = 'native-plugins/media3-player/android/src/main/java/com/giangnam728828/anime/universe/player/PlaybackErrorMapper.kt'
+          if not os.path.isfile(pem):
+              print('❌ 缺少 PlaybackErrorMapper.kt')
+              sys.exit(1)
+          pm = open(pem, encoding='utf-8').read()
           for token in ['ERROR_CODE_IO_FILE_NOT_FOUND', 'MEDIA_RESOURCE_NOT_FOUND',
                         'ERROR_CODE_PARSING_CONTAINER_MALFORMED', 'MEDIA_FORMAT_INVALID',
-                        'errorCodeName']:
+                        'ERROR_CODE_DECODER_INIT_FAILED', 'DECODER_FAILED']:
+              if token not in pm:
+                  print(f'❌ PlaybackErrorMapper.kt 缺少: {token}')
+                  sys.exit(1)
+          print('✅ 错误映射含 v2 规则（PlaybackErrorMapper）')
+
+          # PlayerActivity 必须委托给 mapper，且保留原始 errorCodeName
+          pa = open('native-plugins/media3-player/android/src/main/java/com/giangnam728828/anime/universe/player/PlayerActivity.kt', encoding='utf-8').read()
+          for token in ['PlaybackErrorMapper.map', 'errorCodeName']:
               if token not in pa:
                   print(f'❌ PlayerActivity.kt 缺少: {token}')
                   sys.exit(1)
-          print('✅ PlayerActivity 错误映射含 v2 规则（保留原始 errorCodeName）')
+          print('✅ PlayerActivity 委托 mapper 并保留原始 errorCodeName')
           PYEOF
 
           echo "== 检查冻结模块与 AudioFocusHelper 未被修改 =="
