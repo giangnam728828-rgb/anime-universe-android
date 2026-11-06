@@ -11,7 +11,10 @@
  * 🔴 D1~D5 不得用 D6 子项代替；D6 七子项独立计数。
  */
 import { describe, it, expect } from 'vitest'
-import '../../services/diagnostics/__tests__/setup'
+/* ★ 迁移说明：原文件首行 import '../../services/diagnostics/__tests__/setup'
+   用于 afterEach 复位 DEP 测试替身。该 setup.ts 从未进入仓库（仅存在于本地
+   影子测试环境），且本文件全程未使用 __setTestDep / __resetTestDep，
+   故此处移除该裸导入；20 项断言与测试逻辑完全不变。 */
 import {
   setDiagEnabled,
   beginRequest,
@@ -24,8 +27,8 @@ import {
   readExportRecords,
   isDiagEnabled,
   maskSnippet,
-} from '../../services/diagnostics'
-import { __diagSnapshot } from '../../services/diagnostics/internal'
+} from '../src/services/diagnostics'
+import { __diagSnapshot } from '../src/services/diagnostics/internal'
 import {
   EXPORT_FIELDS,
   toExportRecord,
@@ -33,8 +36,8 @@ import {
   buildExportPayload,
   buildExportFileName,
   EXPORT_FILE_PREFIX,
-} from './export'
-import type { EvidenceRecord } from '../../services/diagnostics/types'
+} from '../src/modules/diagnostics/export'
+import type { EvidenceRecord } from '../src/services/diagnostics/types'
 
 const mkctx = (rid: string, att = 1) =>
   ({ sourceId: 'src', requestType: 'other', attempt: att, requestId: rid, attemptId: `${rid}:${att}` } as any)
