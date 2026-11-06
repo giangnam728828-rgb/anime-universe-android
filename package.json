@@ -18,6 +18,8 @@
     "zustand": "^4.5.2",
     "@capacitor/app": "^6.0.0",
     "@capacitor/browser": "^6.0.0",
+    "@capacitor/filesystem": "6.0.4",
+    "@capacitor/share": "6.0.4",
     "media3-player": "file:./native-plugins/media3-player"
   },
   "devDependencies": {

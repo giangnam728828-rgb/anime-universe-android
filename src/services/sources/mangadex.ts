@@ -7,9 +7,42 @@
  *  失效恢复：图片 403/404 时重新请求 at-home 服务器地址并重试。
  */
 import { httpGetText } from '../api/nativeHttp'
+import { finalizeInternal, markParsing, markParsed } from '../diagnostics'
+import type { DiagContext } from '../diagnostics'
 import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole, ChapterItem, PageItem } from './types'
 
 const BASE = 'https://api.mangadex.org'
+
+/* ══════════════════════════════════════════════════════════════
+ * 2c 诊断接入：尝试台账（文件内私有，不进入 diagnostics、不新增诊断 API）
+ *  - helper 只【登记】每次尝试，绝不终结
+ *  - 终结权集中在适配器 finally（成功/失败两路径都执行）
+ * ══════════════════════════════════════════════════════════════ */
+type AttemptSlot = { attemptId: string; ok: boolean; err?: unknown; done?: boolean }
+type AttemptPlan = { requestId: string; ledger: AttemptSlot[] }
+
+let reqSeq = 0
+const RUN_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+
+/** 逻辑请求的关联 ID（诊断关联用，非安全令牌；同实例内同步自增保证不重复） */
+function nextRequestId(tag: 'manga_search'): string {
+  reqSeq += 1
+  return `mangadex:${tag}:${RUN_ID}:${reqSeq.toString(36)}`
+}
+
+/** 适配器侧统一终结：双层隔离，诊断异常绝不覆盖业务返回值或原始异常 */
+function settleLedger(ledger: AttemptSlot[]): void {
+  try {
+    for (const s of ledger) {
+      if (s.done) continue
+      s.done = true
+      try {
+        if (s.ok) finalizeInternal(s.attemptId, 'success')
+        else finalizeInternal(s.attemptId, 'failure', s.err)
+      } catch { /* 内层：单个 slot 失败不影响其余 */ }
+    }
+  } catch { /* 外层：遍历本身异常同样不外泄 */ }
+}
 const COVER = 'https://uploads.mangadex.org/covers'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -20,18 +53,27 @@ const TTL = 5 * 60 * 1000
 const serverCache = new Map<string, { t: number; v: any }>()
 const SERVER_TTL = 10 * 60 * 1000
 
-async function mdGet(path: string): Promise<any> {
+async function mdGet(path: string, plan?: AttemptPlan): Promise<any> {
   const hit = memCache.get(path)
-  if (hit && Date.now() - hit.t < TTL) return hit.v
+  if (hit && Date.now() - hit.t < TTL) return hit.v // ★ 缓存命中：不建 ctx、不登记
   let lastErr: unknown
   for (let i = 0; i < 2; i++) {
+    const attempt = i + 1
+    const slot: AttemptSlot | undefined = plan ? { attemptId: `${plan.requestId}:${attempt}`, ok: false } : undefined
+    if (slot && plan) plan.ledger.push(slot) // ★ 先入账、后发请求
     try {
-      const r = await httpGetText(`${BASE}${path}`, 10000)
+      const ctx: DiagContext | undefined = slot && plan
+        ? { sourceId: 'mangadex', requestType: 'manga_search', attempt, requestId: plan.requestId, attemptId: slot.attemptId, path: path.split('?')[0] }
+        : undefined
+      const r = await httpGetText(`${BASE}${path}`, 10000, undefined, ctx)
       if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
+      if (ctx) markParsing(ctx.attemptId)
       const json = JSON.parse(r.text)
+      if (ctx && slot) { markParsed(ctx.attemptId); slot.ok = true } // ★ 只记 ok，不终结
       memCache.set(path, { t: Date.now(), v: json })
       return json
     } catch (e) {
+      if (slot) slot.err = e // ★ 只记错，不终结
       lastErr = e
       await new Promise((res) => setTimeout(res, 900 * (i + 1)))
     }
@@ -123,6 +165,8 @@ const mangadex: SourceAdapter = {
   name: 'MangaDex',
 
   async search(opts: SearchOptions): Promise<SearchResult> {
+    const requestId = nextRequestId('manga_search') // ★ 每个 search 各一
+    const ledger: AttemptSlot[] = []
     const page = opts.page ?? 1
     const offset = (page - 1) * PAGE
     const q = new URLSearchParams()
@@ -137,10 +181,14 @@ const mangadex: SourceAdapter = {
       q.set(`order[${order}]`, 'desc')
       if (order === 'latestUploadedChapter') q.set('hasAvailableChapters', 'true')
     }
-    const json = await mdGet(`/manga?${q.toString()}`)
-    const items = (json.data || []).map(mapManga)
-    const total = json.total ?? 0
-    return { items, hasNext: offset + items.length < total }
+    try {
+      const json = await mdGet(`/manga?${q.toString()}`, { requestId, ledger })
+      const items = (json.data || []).map(mapManga)
+      const total = json.total ?? 0
+      return { items, hasNext: offset + items.length < total }
+    } finally {
+      settleLedger(ledger) // ★ 唯一终结点：错误照常上抛（无 catch）
+    }
   },
 
   async getDetail(_kind: Kind, workId: string): Promise<WorkDetail> {

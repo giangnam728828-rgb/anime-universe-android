@@ -9,10 +9,43 @@
  *  B漫搜索复用静态通用头尽力而为，失败则报告来源不可用（不绕过访问控制）。
  */
 import { httpGetText, httpPostJson } from '../api/nativeHttp'
+import { finalizeInternal, markParsing, markParsed, markBusinessCheck } from '../diagnostics'
+import type { DiagContext } from '../diagnostics'
 import { normalizeCover } from '../../utils/cover'
 import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, Kind, StaffRole } from './types'
 
 const BASE = 'https://api.bilibili.com'
+
+/* ══════════════════════════════════════════════════════════════
+ * 2c 诊断接入：尝试台账（文件内私有，不进入 diagnostics、不新增诊断 API）
+ *  - helper 只【登记】每次尝试，绝不终结
+ *  - 终结权集中在适配器 finally（成功/失败两路径都执行）
+ * ══════════════════════════════════════════════════════════════ */
+type AttemptSlot = { attemptId: string; ok: boolean; err?: unknown; done?: boolean }
+type AttemptPlan = { requestId: string; ledger: AttemptSlot[] }
+
+let reqSeq = 0
+const RUN_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+
+/** 逻辑请求的关联 ID（诊断关联用，非安全令牌；同实例内同步自增保证不重复） */
+function nextRequestId(tag: 'anime_list' | 'manga_search'): string {
+  reqSeq += 1
+  return `bilibili:${tag}:${RUN_ID}:${reqSeq.toString(36)}`
+}
+
+/** 适配器侧统一终结：双层隔离，诊断异常绝不覆盖业务返回值或原始异常 */
+function settleLedger(ledger: AttemptSlot[]): void {
+  try {
+    for (const s of ledger) {
+      if (s.done) continue
+      s.done = true
+      try {
+        if (s.ok) finalizeInternal(s.attemptId, 'success')
+        else finalizeInternal(s.attemptId, 'failure', s.err)
+      } catch { /* 内层：单个 slot 失败不影响其余 */ }
+    }
+  } catch { /* 外层：遍历本身异常同样不外泄 */ }
+}
 const UA_BILI = 'Mozilla/5.0 (Linux; Android 14) AnimeUniverse/0.6'
 /** 固定普通请求头（非动态指纹；B站网页端常规头） */
 const HEADERS = { Referer: 'https://www.bilibili.com/', Accept: 'application/json' }
@@ -46,44 +79,79 @@ function mapMangaComic(it: any): WorkItem | null {
 
 async function mangaSearch(kw: string): Promise<SearchResult> {
   // 仅用静态普通头，不携带/获取设备指纹；B漫 Search 若被风控(code!=0)或401/403，如实抛错由聚合降级
-  const r = await httpPostJson(
-    MANGA_API,
-    { 'User-Agent': UA_BILI, Referer: 'https://manga.bilibili.com/', Accept: 'application/json' },
-    { keyWord: kw, pageNum: 1, pageSize: 20 },
-    10000,
-  )
-  if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
-  const json = JSON.parse(r.text)
-  if (json.code !== 0) throw new Error(json.msg || `code ${json.code}`)
-  const items = (json?.data?.list || []).map(mapMangaComic).filter(Boolean) as WorkItem[]
-  for (const it of items) {
-    mangaDetailMap.set(it.workId, it)
-    if (mangaDetailMap.size > 300) {
-      const first = mangaDetailMap.keys().next().value
-      if (first !== undefined) mangaDetailMap.delete(first)
-    }
+  const requestId = nextRequestId('manga_search')
+  const ledger: AttemptSlot[] = []
+  const slot: AttemptSlot = { attemptId: `${requestId}:1`, ok: false } // ★ 无重试 ⇒ attempt 恒 1
+  ledger.push(slot) // ★ 先入账、后发请求
+  const ctx: DiagContext = {
+    sourceId: 'bilibili', requestType: 'manga_search', attempt: 1,
+    requestId, attemptId: slot.attemptId,
+    path: '/twirp/comic.v1.Comic/Search', // ★ 裁定 A：不含 BASE、不含 query
   }
-  return { items, hasNext: false }
+  try {
+    const r = await httpPostJson(
+      MANGA_API,
+      { 'User-Agent': UA_BILI, Referer: 'https://manga.bilibili.com/', Accept: 'application/json' },
+      { keyWord: kw, pageNum: 1, pageSize: 20 },
+      10000,
+      ctx,
+    )
+    if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
+    markParsing(ctx.attemptId)
+    const json = JSON.parse(r.text)
+    if (json.code !== 0) {
+      markBusinessCheck(ctx.attemptId) // ★ 业务码失败 → source_error
+      throw new Error(json.msg || `code ${json.code}`)
+    }
+    markParsed(ctx.attemptId)
+    slot.ok = true
+    const items = (json?.data?.list || []).map(mapMangaComic).filter(Boolean) as WorkItem[]
+    for (const it of items) {
+      mangaDetailMap.set(it.workId, it)
+      if (mangaDetailMap.size > 300) {
+        const first = mangaDetailMap.keys().next().value
+        if (first !== undefined) mangaDetailMap.delete(first)
+      }
+    }
+    return { items, hasNext: false }
+  } catch (e) {
+    slot.err = e // ★ 只记错；不加 catch 分支 ⇒ 错误原样上抛
+    throw e
+  } finally {
+    settleLedger(ledger) // ★ 唯一终结点
+  }
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const memCache = new Map<string, { t: number; v: any }>()
 const TTL = 5 * 60 * 1000
 
-async function biliGet(path: string): Promise<any> {
+async function biliGet(path: string, plan?: AttemptPlan): Promise<any> {
   const key = path
   const hit = memCache.get(key)
-  if (hit && Date.now() - hit.t < TTL) return hit.v
+  if (hit && Date.now() - hit.t < TTL) return hit.v // ★ 缓存命中：不建 ctx、不登记
   let lastErr: unknown
   for (let i = 0; i < 2; i++) {
+    const attempt = i + 1
+    const slot: AttemptSlot | undefined = plan ? { attemptId: `${plan.requestId}:${attempt}`, ok: false } : undefined
+    if (slot && plan) plan.ledger.push(slot) // ★ 先入账、后发请求
     try {
-      const r = await httpGetText(`${BASE}${path}`, 8000, HEADERS)
+      const ctx: DiagContext | undefined = slot && plan
+        ? { sourceId: 'bilibili', requestType: 'anime_list', attempt, requestId: plan.requestId, attemptId: slot.attemptId, path: path.split('?')[0] }
+        : undefined
+      const r = await httpGetText(`${BASE}${path}`, 8000, HEADERS, ctx)
       if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
+      if (ctx) markParsing(ctx.attemptId)
       const json = JSON.parse(r.text)
-      if (json.code !== 0) throw new Error(json.message || `code ${json.code}`)
+      if (json.code !== 0) {
+        if (ctx) markBusinessCheck(ctx.attemptId) // ★ 业务失败与网络/HTTP 失败区分
+        throw new Error(json.message || `code ${json.code}`)
+      }
+      if (ctx && slot) { markParsed(ctx.attemptId); slot.ok = true } // ★ 只记 ok，不终结
       memCache.set(key, { t: Date.now(), v: json })
       return json
     } catch (e) {
+      if (slot) slot.err = e // ★ 只记错，不终结
       lastErr = e
       await new Promise((res) => setTimeout(res, 800 * (i + 1)))
     }
@@ -120,12 +188,16 @@ function yearOfPage(page: number): number {
 }
 
 async function listSeason(seasonType: 1 | 2, year: number): Promise<{ list: any[]; hasNext: boolean }> {
+  const requestId = nextRequestId('anime_list') // ★ 每个 listSeason 各一（并发不共享）
+  const ledger: AttemptSlot[] = []
   try {
-    const json = await biliGet(`/pgc/season/index/result?season_type=${seasonType}&page=1&pagesize=10&type=1&year=${year}`)
+    const json = await biliGet(`/pgc/season/index/result?season_type=${seasonType}&page=1&pagesize=10&type=1&year=${year}`, { requestId, ledger })
     const list = json?.data?.list || []
     return { list, hasNext: !!json?.data?.has_next }
   } catch {
-    return { list: [], hasNext: false } // 单类失败不阻塞另一类
+    return { list: [], hasNext: false } // 单类失败不阻塞另一类（吞错原样保留）
+  } finally {
+    settleLedger(ledger) // ★ 唯一终结点：return/throw 两路径都执行
   }
 }
 
