@@ -1,17 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import { Loading, EmptyState } from '../../components/ui'
 import { getLocalManga, getLocalPages, dbPut } from '../../database/db'
 import { useSettings, READER_BG_CSS, type ReaderMode, type ReaderBg } from '../../stores/settings'
+import { LOCAL_SOURCE_ID, resolveBackTarget } from './readerRoute'
 
 const BG_LABEL: Record<ReaderBg, string> = { black: '黑', gray: '灰', white: '白', green: '护眼' }
 const WINDOW = 5 // 当前页 ±N 预载（控制内存，规划书要求）
 
 export default function ReaderPage() {
   const nav = useNavigate()
-  const { mangaId = '', chapterId = '' } = useParams()
+  const location = useLocation()
+  // P1 第4子步：四段式路由，显式携带来源。旧路由经 ReaderRedirect 后一定带 sourceId
+  const { sourceId = LOCAL_SOURCE_ID, mangaId = '', chapterId = '' } = useParams()
   const { readerMode, setReaderMode, readerBg, setReaderBg } = useSettings()
+
+  /**
+   * 统一的返回逻辑（错误态与顶栏必须走同一套）。
+   *
+   * 用户裁定：返回目标由入口通过 state.from 明确提供，
+   * 不依据浏览器历史长度猜测。无法校验时 fallback 到 /library。
+   */
+  const goBack = useCallback(() => {
+    const t = resolveBackTarget(location.state)
+    nav(t.path, { replace: false })
+  }, [nav, location.state])
 
   const [pages, setPages] = useState<Blob[]>([])
   const [loading, setLoading] = useState(true)
@@ -49,7 +63,9 @@ export default function ReaderPage() {
         const q = new URLSearchParams(window.location.hash.split('?')[1] || '')
         if (q.get('p')) target = Math.max(0, Number(q.get('p')) || 0)
         else {
-          const hist = await (await import('../../database/db')).getReadingProgress(`local-${mangaId}`)
+          // 与写入侧保持同一 itemId 格式：local 来源时等价于原 local-${mangaId}，
+          // 在线来源时读取 mangadex-${mangaId}（不改变本地既有记录格式）
+          const hist = await (await import('../../database/db')).getReadingProgress(`${sourceId}-${mangaId}`)
           if (hist && hist.chapterId === chapterId) target = Math.max(0, hist.pageIndex || 0)
         }
         requestAnimationFrame(() => setTimeout(() => {
@@ -94,7 +110,9 @@ export default function ReaderPage() {
       const ch = getLocalManga(mangaId).then((m) => m?.chapters.find((c) => c.id === chapterId)?.title || '章节')
       void ch.then((chapter) =>
         dbPut('reading_history', {
-          itemId: `local-${mangaId}`, title: mangaTitle, chapter, chapterId,
+          itemId: `${sourceId}-${mangaId}`, title: mangaTitle, chapter, chapterId,
+          // P1 第4子步：明确写入来源，供 FavoritesPage 判断（旧记录该字段为 undefined）
+          sourceId,
           position: pages.length ? (idx + 1) / pages.length : 0,
           pageIndex: idx, pageCount: pages.length, at: Date.now(),
         }),
@@ -158,7 +176,7 @@ export default function ReaderPage() {
   if (loading) return <div style={{ background: bg, minHeight: '100vh' }}><Loading text="打开章节…" /></div>
   if (error) {
     return <div style={{ background: bg, minHeight: '100vh', display: 'flex', alignItems: 'center' }}>
-      <EmptyState icon="info" title="无法打开" desc={error} actionText="返回" onAction={() => nav(-1)} />
+      <EmptyState icon="info" title="无法打开" desc={error} actionText="返回" onAction={goBack} />
     </div>
   }
 
@@ -168,7 +186,7 @@ export default function ReaderPage() {
       {bar && (
         <>
           <div className="rd-top">
-            <button onClick={() => nav(-1)} className="rd-btn"><Icon name="chevron" size={18} /></button>
+            <button onClick={goBack} className="rd-btn"><Icon name="chevron" size={18} /></button>
             <div className="rd-title">{mangaTitle}</div>
             <div className="rd-count">{cur + 1} / {pages.length}</div>
           </div>

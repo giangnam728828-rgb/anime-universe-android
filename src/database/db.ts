@@ -24,6 +24,23 @@ export interface ReadingHistoryItem {
   itemId: string; title: string; chapter: string
   position: number; at: number
   chapterId?: string; pageIndex?: number; pageCount?: number
+  /**
+   * 阅读来源标识（P1 第4子步新增，可选）
+   *
+   * - `'local'`  本地导入漫画
+   * - `'mangadex'` MangaDex 在线漫画
+   * - `undefined` 本字段出现之前写入的旧记录
+   *
+   * ⚠️ 纯增量字段，**不做 IndexedDB 迁移、不批量重写旧记录**。
+   *    读取方必须兼容 undefined：
+   *    旧记录回退到 `itemId` 前缀判断（`local-` / `mangadex-`）。
+   *
+   * ⚠️ 本字段只解决「阅读历史的来源识别」，
+   *    **不解决**收藏与阅读历史的作品关联
+   *    （收藏 ID 为 `${sourceId}-${kind}-${workId}`，
+   *      本地导入作品 ID 是另一套体系，两者不可直接匹配）。
+   */
+  sourceId?: string
 }
 
 export interface LocalChapter { id: string; title: string; count: number; addedAt: number }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { localReaderPath } from '../reader/readerRoute'
 import Icon from '../../components/Icon'
 import { EmptyState, Loading, Section, Modal } from '../../components/ui'
 import { getLocalManga, importChapter, deleteLocalManga, type LocalManga } from '../../database/db'
@@ -7,6 +8,7 @@ import { getLocalManga, importChapter, deleteLocalManga, type LocalManga } from 
 export default function LocalDetailPage() {
   const nav = useNavigate()
   const { id = '' } = useParams()
+  const location = useLocation()
   const [m, setM] = useState<LocalManga | null | undefined>(undefined)
   const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -68,7 +70,7 @@ export default function LocalDetailPage() {
         ) : (
           <div className="rows">
             {m.chapters.map((c) => (
-              <button key={c.id} className="row-item" onClick={() => nav(`/reader/${m.id}/${c.id}`)}>
+              <button key={c.id} className="row-item" onClick={() => nav(localReaderPath(m.id, c.id), { state: { from: location.pathname } })}>
                 <span className="ric"><Icon name="book" size={19} /></span>
                 <span className="rmain">
                   <div className="rtitle">{c.title}</div>

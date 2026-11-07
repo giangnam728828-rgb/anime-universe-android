@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { localReaderPath } from '../reader/readerRoute'
 import Icon from '../../components/Icon'
 import { EmptyState, Section, Loading, Modal } from '../../components/ui'
 import { getLocalMangas, importChapter, deleteLocalManga, getReadingProgress, type LocalManga, type ReadingHistoryItem } from '../../database/db'
 
 export default function LibraryPage() {
   const nav = useNavigate()
+  const location = useLocation()
   const [list, setList] = useState<LocalManga[]>([])
   const [prog, setProg] = useState<Record<string, ReadingHistoryItem>>({})
   const [loading, setLoading] = useState(true)
@@ -82,7 +84,7 @@ export default function LibraryPage() {
                       <div className="lib-prog"><span style={{ width: `${Math.round(h.position * 100)}%` }} /></div>
                       <button className="lib-continue" onClick={(e) => {
                         e.stopPropagation()
-                        if (h.chapterId) nav(`/reader/${m.id}/${h.chapterId}${h.pageIndex ? `?p=${h.pageIndex}` : ''}`)
+                        if (h.chapterId) nav(localReaderPath(m.id, h.chapterId, h.pageIndex), { state: { from: location.pathname } })
                       }}>
                         继续阅读 {h.chapter} · {Math.round(h.position * 100)}%
                       </button>

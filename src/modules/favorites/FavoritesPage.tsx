@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { historyReaderPath, resolveHistorySource } from '../reader/readerRoute'
 import Icon from '../../components/Icon'
 import { EmptyState, Section } from '../../components/ui'
 import { dbGetAll, dbDelete, dbClear, type FavoriteItem, type ReadingHistoryItem } from '../../database/db'
@@ -8,6 +9,7 @@ type Tab = 'fav' | 'history'
 
 export default function FavoritesPage() {
   const nav = useNavigate()
+  const location = useLocation()
   const [tab, setTab] = useState<Tab>('fav')
   const [favs, setFavs] = useState<FavoriteItem[]>([])
   const [history, setHistory] = useState<ReadingHistoryItem[]>([])
@@ -76,21 +78,34 @@ export default function FavoritesPage() {
               desc="阅读器将在阶段 4 实现，届时记录章节与进度，支持继续阅读。" />
           ) : (
             <div className="rows">
-              {history.map((h) => (
+              {history.map((h) => {
+                /**
+                 * P1 第4子步：来源判定改造
+                 *  - 新记录：优先用 h.sourceId 字段
+                 *  - 旧记录（sourceId 为 undefined）：回退到 itemId 前缀判断
+                 * 不再用 `startsWith('local-')` 单一条件，也不再手拼 replace。
+                 */
+                const src = resolveHistorySource(h)
+                const canContinue = src.kind !== 'unknown' && !!h.chapterId
+                return (
                 <div key={h.itemId} className="row-item">
                   <span className="ric"><Icon name="book" size={19} /></span>
                   <span className="rmain">
                     <div className="rtitle">{h.title}</div>
-                    <div className="rdesc">{h.chapter} · 进度 {Math.round(h.position * 100)}%</div>
+                    <div className="rdesc">
+                      {h.chapter} · 进度 {Math.round(h.position * 100)}%
+                      {src.kind === 'online' && ' · 在线'}
+                    </div>
                   </span>
-                  {h.itemId.startsWith('local-') && h.chapterId && (
+                  {canContinue && (
                     <button className="badge" style={{ padding: '5px 12px', fontSize: 11.5 }}
-                      onClick={() => nav(`/reader/${h.itemId.replace('local-', '')}/${h.chapterId}${h.pageIndex ? `?p=${h.pageIndex}` : ''}`)}>
+                      onClick={() => { const p = historyReaderPath(h); if (p) nav(p, { state: { from: location.pathname } }) }}>
                       继续
                     </button>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </Section>

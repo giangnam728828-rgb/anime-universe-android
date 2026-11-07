@@ -10,6 +10,7 @@ import DetailPage from './modules/detail/DetailPage'
 import LibraryPage from './modules/library/LibraryPage'
 import LocalDetailPage from './modules/library/LocalDetailPage'
 import ReaderPage from './modules/reader/ReaderPage'
+import ReaderRedirect from './modules/reader/ReaderRedirect'
 import PerfPage from './modules/perf/PerfPage'
 import NewsPage from './modules/news/NewsPage'
 import NewsViewPage from './modules/news/NewsViewPage'
@@ -38,7 +39,13 @@ export default function App() {
         </Route>
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/local/:id" element={<LocalDetailPage />} />
-        <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
+        {/*
+          P1 第4子步：四段式阅读路由，显式携带来源标识。
+          - sourceId 用真实来源 ID（local / mangadex），不用显示名称
+          - 旧三段式路由保留，统一重定向到 local（见 ReaderRedirect）
+        */}
+        <Route path="/reader/:sourceId/:mangaId/:chapterId" element={<ReaderPage />} />
+        <Route path="/reader/:mangaId/:chapterId" element={<ReaderRedirect />} />
         <Route path="/perf" element={<PerfPage />} />
         <Route path="/news" element={<NewsPage />} />
         <Route path="/newsview/:eid" element={<NewsViewPage />} />
