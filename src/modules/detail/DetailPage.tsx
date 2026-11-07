@@ -5,7 +5,7 @@ import { Section, EmptyState, Loading, Modal } from '../../components/ui'
 import { useAsync } from '../../hooks/useAsync'
 import { getSource, SOURCE_NAMES, type Kind, type WorkDetail } from '../../services/sources'
 import SourceBadge from '../../components/SourceBadge'
-import SmartImage from '../../components/SmartImage'
+import ProxyCover from '../covers/ProxyCover'
 import { isFavorited, toggleFavorite } from '../../database/db'
 import { createToken, peek, type EntrySnapshot, type RouteIdentity } from './searchSession'
 import ChapterList, { sourceSupportsChapters } from './ChapterList'
@@ -94,7 +94,7 @@ export default function DetailPage() {
 
       <div className="detail-hero">
         <div className="dh-cover">
-          <SmartImage src={d.cover} eager fallbackIcon={d.kind === 'manga' ? 'book' : 'film'} />
+          <ProxyCover src={d.cover} sourceId={d.sourceId} eager fallbackIcon={d.kind === 'manga' ? 'book' : 'film'} />
         </div>
         <div className="dh-info">
           <div className="dh-title">{d.title}</div>

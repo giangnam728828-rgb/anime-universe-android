@@ -283,15 +283,18 @@ describe('UA-8 · 其他来源的 UA 不受影响', () => {
     expect(bili).not.toContain('MANGADEX_USER_AGENT')
   })
 
-  it('UA-8d · MANGADEX_USER_AGENT 只出现在 mangadex.ts 与在线阅读服务层', async () => {
+  it('UA-8d · MANGADEX_USER_AGENT 只出现在 mangadex.ts 与在线阅读/封面服务层', async () => {
     const { execSync } = await import('node:child_process')
-    // 定义处（mangadex.ts）+ 在线图片下载消费处（onlineChapters.ts）
+    // 定义处（mangadex.ts）+ 消费处：
+    //   onlineChapters.ts —— 正文图片下载（第3子步）
+    //   mangadexCover.ts  —— 封面 Blob 代理（第8子步）
     // 🔴 不得出现在其他来源适配器或冻结区
     const out = execSync(
       'grep -rl "MANGADEX_USER_AGENT" src/ || true',
       { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf-8' },
     ).trim().split('\n').filter(Boolean).sort()
     expect(out).toEqual([
+      'src/services/covers/mangadexCover.ts',
       'src/services/reader/onlineChapters.ts',
       'src/services/sources/mangadex.ts',
     ])

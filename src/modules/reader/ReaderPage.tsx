@@ -294,12 +294,10 @@ export default function ReaderPage() {
           style={{ background: bg }}>
           {imgs.map((i) => (
             <div key={i} ref={(el) => { itemRefs.current[i] = el }} className="rd-page">
-              {urlFor(i) ? (
-                isFailed(i) ? (
-                  <div className="rd-retry" onClick={() => retryImg(i)}>加载失败 · 点按重试</div>
-                ) : (
-                  <img src={urlFor(i)} onError={() => { if (isLocal) setFailed((s) => new Set(s).add(i)); else onlineWin.retry(i) }} alt={`第${i + 1}页`} />
-                )
+              {isFailed(i) ? (
+                <div className="rd-retry" onClick={() => retryImg(i)}>加载失败 · 点按重试</div>
+              ) : urlFor(i) ? (
+                <img src={urlFor(i)} onError={() => { if (isLocal) setFailed((s) => new Set(s).add(i)); else onlineWin.markFailed(i) }} alt={`第${i + 1}页`} />
               ) : (
                 <div className="rd-hold">{i + 1}</div>
               )}
@@ -312,12 +310,10 @@ export default function ReaderPage() {
           style={{ background: bg }}>
           {imgs.map((i) => (
             <div key={i} className="rd-slide">
-              {urlFor(i) ? (
-                isFailed(i) ? (
-                  <div className="rd-retry" onClick={(e) => { e.stopPropagation(); retryImg(i) }}>加载失败 · 点按重试</div>
-                ) : (
-                  <img src={urlFor(i)} onError={() => { if (isLocal) setFailed((s) => new Set(s).add(i)); else onlineWin.retry(i) }} alt={`第${i + 1}页`} draggable={false} />
-                )
+              {isFailed(i) ? (
+                <div className="rd-retry" onClick={(e) => { e.stopPropagation(); retryImg(i) }}>加载失败 · 点按重试</div>
+              ) : urlFor(i) ? (
+                <img src={urlFor(i)} onError={() => { if (isLocal) setFailed((s) => new Set(s).add(i)); else onlineWin.markFailed(i) }} alt={`第${i + 1}页`} draggable={false} />
               ) : (
                 <div className="rd-hold">{i + 1}</div>
               )}

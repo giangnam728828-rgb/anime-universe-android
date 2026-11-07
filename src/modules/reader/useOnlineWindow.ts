@@ -26,6 +26,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getOnlinePageBlob, type OnlinePagesResult } from '../../services/reader/onlineChapters'
+import { isAbortError } from '../../services/api/abortError'
 
 export interface OnlineWindowState {
   /** 已就绪的 Blob（只有窗口内的页会有值） */
@@ -36,6 +37,15 @@ export interface OnlineWindowState {
   failed: Set<number>
   /** 触发某页重新下载（用户点「重试」） */
   retry: (index: number) => void
+  /**
+   * 标记某页失败（**不重新请求**）。
+   *
+   * 第8子步新增：`<img>` 的 onError 只能「记录失败」，
+   * 绝不能再顺手 `retry()` —— 那会把失败状态立刻清掉，
+   * 形成「失败 → 重试 → 又失败 → 再重试」的死循环，
+   * 用户永远看不到失败提示（T6 真机现象的根因）。
+   */
+  markFailed: (index: number) => void
 }
 
 export interface UseOnlineWindowOptions {
@@ -109,7 +119,7 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
         .catch((e: unknown) => {
           if (!aliveRef.current) return
           // abort 属正常流程（切章/卸载），不记为失败
-          if ((e as { name?: string })?.name === 'AbortError') {
+          if (isAbortError(e)) {
             setPending((s) => { const n = new Set(s); n.delete(i); return n })
             return
           }
@@ -159,11 +169,26 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
       .catch((e: unknown) => {
         if (!aliveRef.current) return
         setPending((s) => { const n = new Set(s); n.delete(index); return n })
-        if ((e as { name?: string })?.name !== 'AbortError') {
+        if (!isAbortError(e)) {
           setFailed((s) => { const n = new Set(s); n.add(index); return n })
         }
       })
   }, [pages])
 
-  return { blobs, pending, failed, retry }
+  /**
+   * 只记录失败，不发起任何请求。
+   *
+   * 用途：`<img src={ObjectURL}>` 的 onError。
+   * 走到 onError 说明「Blob 已经拿到了，但渲染失败」（解码失败 / URL 被回收）。
+   * 此时绝不能自动重新下载 —— 重下多半还是同一份坏数据，只会变成请求风暴。
+   */
+  const markFailed = useCallback((index: number) => {
+    setPending((s) => { const n = new Set(s); n.delete(index); return n })
+    setFailed((s) => {
+      if (s.has(index)) return s
+      const n = new Set(s); n.add(index); return n
+    })
+  }, [])
+
+  return { blobs, pending, failed, retry, markFailed }
 }

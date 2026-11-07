@@ -346,6 +346,16 @@ input { font-family: inherit; color: inherit; }
 img.is-loading { opacity: 0; }
 img.is-loaded { opacity: 1; transition: opacity 0.25s; }
 
+/* 第8子步：MangaDex 封面 Blob 代理的失败重试态
+   注意 .smart-img-fallback 默认是 div；这里复用同一视觉，但换成 button
+   以便点击重试（封面不自动重试，必须用户主动触发，避免请求风暴） */
+.cover-retry {
+  flex-direction: column; gap: 4px;
+  border: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--muted);
+}
+.cover-retry-text { font-size: 10px; line-height: 1; }
+
 /* 首页区块辅助行：部分来源失败/加载中提示 */
 .block-partial { font-size: 10.5px; color: var(--muted); padding: 4px 2px 0; }
 .link-btn { background: none; border: none; color: var(--accent); font-size: 10.5px; padding: 0 0 0 6px; }

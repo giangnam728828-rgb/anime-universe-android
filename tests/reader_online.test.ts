@@ -206,7 +206,12 @@ describe('R7 · 失败不导致阅读器崩溃', () => {
   })
 
   it('R7b · AbortError 不记为失败（正常流程）', () => {
-    expect(hookSrc).toContain("=== 'AbortError'")
+    // 第8子步修正：原断言只认 name === 'AbortError'，
+    // 但 binaryHttp 的取消错误 name 是 'BinaryHttpAbortError'，
+    // 字符串比较永远匹配不上 ⇒ 切章/卸载会被误记为失败（F5 根因）。
+    // 现统一走 isAbortError()，断言同步收紧为「必须用统一判别 + 不得再用裸字符串比较」。
+    expect(hookSrc).toContain('if (isAbortError(e)) {')
+    expect(hookSrc).not.toContain("=== 'AbortError'")
   })
 
   it('R7c · 整章无图片时才抛错（有明确提示）', () => {
