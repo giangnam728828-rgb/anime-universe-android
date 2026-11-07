@@ -500,30 +500,40 @@ jobs:
 
           echo "== 检查前端素材 URI 使用 asset:/// 而非 window.location.origin =="
           python3 - <<'PYEOF'
-          import re, sys
-          src = open('src/modules/player/PlayerPage.tsx', encoding='utf-8').read()
+          import re, sys, os
 
-          if "asset:///" not in src:
-              print('❌ PlayerPage.tsx 未使用 asset:/// URI')
+          # 阶段3·第2步·批次③：自检逻辑从 PlayerPage.tsx 抽到 playerFlow.ts，
+          # 因此两处都要检查（素材定义可能在任一处）。
+          files = ['src/modules/player/PlayerPage.tsx', 'src/modules/player/playerFlow.ts']
+          sources = {}
+          for f in files:
+              if os.path.exists(f):
+                  sources[f] = open(f, encoding='utf-8').read()
+
+          combined = '\n'.join(sources.values())
+
+          if "asset:///" not in combined:
+              print('❌ 播放模块未使用 asset:/// URI')
               sys.exit(1)
-          print("✅ PlayerPage.tsx 使用 asset:/// URI")
+          print("✅ 播放模块使用 asset:/// URI")
 
           # 素材 URL 不得再依赖 window.location.origin（上一轮崩溃根因）
           bad_lines = []
-          for i, line in enumerate(src.splitlines(), 1):
-              stripped = line.strip()
-              if stripped.startswith('//') or stripped.startswith('*'):
-                  continue
-              if 'window.location.origin' in stripped:
-                  bad_lines.append((i, stripped))
+          for fname, src in sources.items():
+              for i, line in enumerate(src.splitlines(), 1):
+                  stripped = line.strip()
+                  if stripped.startswith('//') or stripped.startswith('*'):
+                      continue
+                  if 'window.location.origin' in stripped:
+                      bad_lines.append((fname, i, stripped))
           if bad_lines:
               print('❌ 代码中仍使用 window.location.origin 构造素材地址:')
-              for i, l in bad_lines:
-                  print(f'    line {i}: {l}')
+              for fname, i, l in bad_lines:
+                  print(f'    {fname} line {i}: {l}')
               sys.exit(1)
           print('✅ 未在代码中使用 window.location.origin 构造素材地址')
 
-          if not re.search(r"uriKind\s*:\s*'asset'", src):
+          if not re.search(r"uriKind\s*:\s*'asset'", combined):
               print("❌ 自检调用未声明 uriKind: 'asset'")
               sys.exit(1)
           print("✅ 自检调用已声明 uriKind: 'asset'")
