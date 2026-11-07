@@ -5,6 +5,8 @@ import { Loading, EmptyState } from '../../components/ui'
 import { getLocalManga, getLocalPages, dbPut } from '../../database/db'
 import { useSettings, READER_BG_CSS, type ReaderMode, type ReaderBg } from '../../stores/settings'
 import { LOCAL_SOURCE_ID, resolveBackTarget } from './readerRoute'
+import { getOnlinePages, type OnlinePagesResult } from '../../services/reader/onlineChapters'
+import { useOnlineWindow } from './useOnlineWindow'
 
 const BG_LABEL: Record<ReaderBg, string> = { black: '黑', gray: '灰', white: '白', green: '护眼' }
 const WINDOW = 5 // 当前页 ±N 预载（控制内存，规划书要求）
@@ -27,6 +29,9 @@ export default function ReaderPage() {
     nav(t.path, { replace: false })
   }, [nav, location.state])
 
+  const isLocal = sourceId === LOCAL_SOURCE_ID
+  /** 在线分支的图片清单（本地分支恒为 null） */
+  const [online, setOnline] = useState<OnlinePagesResult | null>(null)
   const [pages, setPages] = useState<Blob[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -42,42 +47,78 @@ export default function ReaderPage() {
   const restoredRef = useRef(false)
   const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /**
+   * 恢复阅读位置：优先 URL ?p=，否则该章节的历史页码。
+   * 本地与在线分支共用（页码语义一致，itemId 由 sourceId 区分）。
+   */
+  const restoreProgress = useCallback(async (total: number) => {
+    let target = 0
+    const q = new URLSearchParams(window.location.hash.split('?')[1] || '')
+    if (q.get('p')) target = Math.max(0, Number(q.get('p')) || 0)
+    else {
+      // 与写入侧保持同一 itemId 格式：local 来源时等价于原 local-${mangaId}，
+      // 在线来源时读取 mangadex-${mangaId}（不改变本地既有记录格式）
+      const hist = await (await import('../../database/db')).getReadingProgress(`${sourceId}-${mangaId}`)
+      if (hist && hist.chapterId === chapterId) target = Math.max(0, hist.pageIndex || 0)
+    }
+    requestAnimationFrame(() => setTimeout(() => {
+      if (restoredRef.current) return
+      restoredRef.current = true
+      if (readerMode === 'horizontal') {
+        scrollRef.current?.scrollTo({ left: target * (scrollRef.current?.clientWidth || 0) })
+      } else {
+        itemRefs.current[target]?.scrollIntoView()
+      }
+      setCur(Math.min(target, Math.max(0, total - 1)))
+    }, 60))
+  }, [sourceId, mangaId, chapterId, readerMode])
+
   /* 加载章节页面 + 恢复进度 */
   useEffect(() => {
     let alive = true
     ;(async () => {
       setLoading(true)
       try {
-        const m = await getLocalManga(mangaId)
-        if (!m) throw new Error('漫画不存在（可能已被删除）')
-        const ch = m.chapters.find((c) => c.id === chapterId)
-        if (!ch) throw new Error('章节不存在')
-        const ps = await getLocalPages(mangaId, chapterId)
-        if (!alive) return
-        setMangaTitle(m.title)
-        setPages(ps.map((p) => p.blob))
-        setLoading(false)
-
-        // 恢复：优先 URL ?p=，否则该章节的历史页码
-        let target = 0
-        const q = new URLSearchParams(window.location.hash.split('?')[1] || '')
-        if (q.get('p')) target = Math.max(0, Number(q.get('p')) || 0)
-        else {
-          // 与写入侧保持同一 itemId 格式：local 来源时等价于原 local-${mangaId}，
-          // 在线来源时读取 mangadex-${mangaId}（不改变本地既有记录格式）
-          const hist = await (await import('../../database/db')).getReadingProgress(`${sourceId}-${mangaId}`)
-          if (hist && hist.chapterId === chapterId) target = Math.max(0, hist.pageIndex || 0)
+        /* ── 分支 A：本地阅读（行为保持不变）── */
+        if (isLocal) {
+          const m = await getLocalManga(mangaId)
+          if (!m) throw new Error('漫画不存在（可能已被删除）')
+          const ch = m.chapters.find((c) => c.id === chapterId)
+          if (!ch) throw new Error('章节不存在')
+          const ps = await getLocalPages(mangaId, chapterId)
+          if (!alive) return
+          setMangaTitle(m.title)
+          setPages(ps.map((p) => p.blob))
+          setOnline(null)
+          setLoading(false)
+          await restoreProgress(ps.length)
+          return
         }
-        requestAnimationFrame(() => setTimeout(() => {
-          if (!alive || restoredRef.current) return
-          restoredRef.current = true
-          if (readerMode === 'horizontal') {
-            scrollRef.current?.scrollTo({ left: target * (scrollRef.current?.clientWidth || 0) })
-          } else {
-            itemRefs.current[target]?.scrollIntoView()
-          }
-          setCur(Math.min(target, ps.length - 1))
-        }, 60))
+
+        /* ── 分支 B：在线阅读（MangaDex）── */
+        // 只取图片清单，不下载字节；字节由 useOnlineWindow 按窗口拉取
+        const { getSource } = await import('../../services/sources/registry')
+        const adapter = getSource(sourceId)
+        // getSource 找不到时会回退 SOURCES[0]，必须显式校验，防止串源
+        if (adapter.id !== sourceId) throw new Error(`未知阅读来源：${sourceId}`)
+        if (typeof adapter.getPages !== 'function') {
+          throw new Error(`来源 ${sourceId} 不支持在线阅读`)
+        }
+
+        const [detail, list] = await Promise.all([
+          adapter.getDetail('manga', mangaId).catch(() => null),
+          getOnlinePages(adapter, sourceId, mangaId, chapterId),
+        ])
+        if (!alive) return
+        if (list.total === 0) throw new Error('本章节没有可阅读的图片')
+
+        setMangaTitle(detail?.title || '在线章节')
+        setOnline(list)
+        // pages 只用于计数与进度（在线分支不存 Blob）
+        setPages(new Array(list.total).fill(null).map(() => new Blob()))
+        setLoading(false)
+        await restoreProgress(list.total)
+
       } catch (e) {
         if (alive) { setError((e as Error).message); setLoading(false) }
       }
@@ -89,12 +130,34 @@ export default function ReaderPage() {
   /* 卸载时回收 objectURL */
   useEffect(() => () => { urlCache.current.forEach((u) => URL.revokeObjectURL(u)); urlCache.current.clear() }, [])
 
+  /* 在线分支：按窗口拉取 Blob（本地分支 enabled=false，完全惰性） */
+  const onlineWin = useOnlineWindow({
+    enabled: !isLocal && !!online,
+    pages: online,
+    cur,
+    window: WINDOW,
+    chapterKey: `${sourceId}:${mangaId}:${chapterId}`,
+  })
+
+  /**
+   * 取某页的 Blob：
+   *  - 本地分支：来自 IndexedDB 的 pages[i]
+   *  - 在线分支：来自 useOnlineWindow 的窗口缓存
+   */
+  const blobFor = useCallback((i: number): Blob | undefined => {
+    if (isLocal) return pages[i]
+    return onlineWin.blobs.get(i)
+  }, [isLocal, pages, onlineWin.blobs])
+
   const urlFor = useCallback((i: number): string | undefined => {
     if (Math.abs(i - cur) > WINDOW) return undefined
     let u = urlCache.current.get(i)
-    if (!u && pages[i]) { u = URL.createObjectURL(pages[i]); urlCache.current.set(i, u) }
+    if (!u) {
+      const b = blobFor(i)
+      if (b) { u = URL.createObjectURL(b); urlCache.current.set(i, u) }
+    }
     return u
-  }, [cur, pages])
+  }, [cur, blobFor])
 
   /* 只在 cur 变化时清理远处 URL，防内存膨胀 */
   useEffect(() => {
@@ -107,7 +170,10 @@ export default function ReaderPage() {
   const save = useCallback((idx: number) => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      const ch = getLocalManga(mangaId).then((m) => m?.chapters.find((c) => c.id === chapterId)?.title || '章节')
+      // 本地分支查本地章节标题；在线分支用章节号（不查本地库，避免串源）
+      const ch = isLocal
+        ? getLocalManga(mangaId).then((m) => m?.chapters.find((c) => c.id === chapterId)?.title || '章节')
+        : Promise.resolve(chapterId)
       void ch.then((chapter) =>
         dbPut('reading_history', {
           itemId: `${sourceId}-${mangaId}`, title: mangaTitle, chapter, chapterId,
@@ -118,7 +184,7 @@ export default function ReaderPage() {
         }),
       )
     }, 700)
-  }, [mangaId, chapterId, mangaTitle, pages.length])
+  }, [isLocal, sourceId, mangaId, chapterId, mangaTitle, pages.length])
 
   const flashBar = useCallback(() => {
     setBar(true)
@@ -164,11 +230,21 @@ export default function ReaderPage() {
   }
 
   const retryImg = (i: number) => {
-    setFailed((s) => { const n = new Set(s); n.delete(i); return n })
+    // 回收该页旧的 Object URL（本地与在线共用）
     const u = urlCache.current.get(i)
     if (u) { URL.revokeObjectURL(u); urlCache.current.delete(i) }
+
+    if (!isLocal) {
+      // 在线分支：交由 useOnlineWindow 重新下载
+      onlineWin.retry(i)
+      return
+    }
+    setFailed((s) => { const n = new Set(s); n.delete(i); return n })
     setCur((c) => c) // 触发重渲染
   }
+
+  /** 该页是否应显示"加载失败"（本地用 failed state，在线用 onlineWin.failed） */
+  const isFailed = (i: number): boolean => (isLocal ? failed.has(i) : onlineWin.failed.has(i))
 
   const bg = READER_BG_CSS[readerBg]
   const imgs = useMemo(() => pages.map((_, i) => i), [pages])
@@ -219,10 +295,10 @@ export default function ReaderPage() {
           {imgs.map((i) => (
             <div key={i} ref={(el) => { itemRefs.current[i] = el }} className="rd-page">
               {urlFor(i) ? (
-                failed.has(i) ? (
+                isFailed(i) ? (
                   <div className="rd-retry" onClick={() => retryImg(i)}>加载失败 · 点按重试</div>
                 ) : (
-                  <img src={urlFor(i)} onError={() => setFailed((s) => new Set(s).add(i))} alt={`第${i + 1}页`} />
+                  <img src={urlFor(i)} onError={() => { if (isLocal) setFailed((s) => new Set(s).add(i)); else onlineWin.retry(i) }} alt={`第${i + 1}页`} />
                 )
               ) : (
                 <div className="rd-hold">{i + 1}</div>
@@ -237,10 +313,10 @@ export default function ReaderPage() {
           {imgs.map((i) => (
             <div key={i} className="rd-slide">
               {urlFor(i) ? (
-                failed.has(i) ? (
+                isFailed(i) ? (
                   <div className="rd-retry" onClick={(e) => { e.stopPropagation(); retryImg(i) }}>加载失败 · 点按重试</div>
                 ) : (
-                  <img src={urlFor(i)} onError={() => setFailed((s) => new Set(s).add(i))} alt={`第${i + 1}页`} draggable={false} />
+                  <img src={urlFor(i)} onError={() => { if (isLocal) setFailed((s) => new Set(s).add(i)); else onlineWin.retry(i) }} alt={`第${i + 1}页`} draggable={false} />
                 )
               ) : (
                 <div className="rd-hold">{i + 1}</div>
