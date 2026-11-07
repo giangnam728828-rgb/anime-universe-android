@@ -453,3 +453,288 @@ describe('P15m 检查点 A：candidateId 作用域', () => {
     expect(src).toContain('解析器 id 必须唯一')
   })
 })
+
+/* ══════════════════════════════════════════════════════════════════════
+ * 批次① 补充证据 ①：迟到结果隔离（用户验收阻塞点 1）
+ *
+ * 🔴 核心命题：物理名额正确释放 ≠ 迟到结果被隔离。两者必须独立验证。
+ * ══════════════════════════════════════════════════════════════════════ */
+
+describe('P16 迟到结果隔离（阻塞点 1）', () => {
+  it('P16a A 超时 + B 正常返回；A 迟到候选不进入结果', async () => {
+    const dA = deferred<PlaybackCandidate[]>()
+    const A = mkResolver('A', () => dA.promise)
+    const B = mkResolver('B', async () => [cand('B', 0)])
+
+    const p = resolveCandidates('w', 'e', [A, B], { timeoutMs: 30 })
+    await new Promise((r) => setTimeout(r, 60))   // A 已超时
+
+    // A 在超时之后才返回候选
+    dA.resolve([cand('A', 0), cand('A', 1)])
+
+    const res = await p
+    // 🔴 结果只含 B
+    expect(res.candidates.map((c) => c.sourceId)).toEqual(['B'])
+    expect(res.succeeded).toEqual(['B'])
+    expect(res.failed).toHaveLength(1)
+    expect(res.failed[0]).toMatchObject({ sourceId: 'A', code: 'RESOLVE_TIMEOUT' })
+  })
+
+  it('P16b 迟到结果不覆盖已成功的 B 候选', async () => {
+    const dA = deferred<PlaybackCandidate[]>()
+    const A = mkResolver('A', () => dA.promise)
+    const B = mkResolver('B', async () => [cand('B', 0), cand('B', 1)])
+
+    const p = resolveCandidates('w', 'e', [A, B], { timeoutMs: 30 })
+    await new Promise((r) => setTimeout(r, 60))
+    dA.resolve([cand('A', 0)])
+    const res = await p
+
+    // B 的两条候选完整保留，A 的没有挤进来
+    expect(res.candidates).toHaveLength(2)
+    expect(res.candidates.every((c) => c.sourceId === 'B')).toBe(true)
+  })
+
+  it('P16c A 的迟到结果不影响下一轮解析', async () => {
+    const dA = deferred<PlaybackCandidate[]>()
+    const A = mkResolver('A', () => dA.promise)
+    const B = mkResolver('B', async () => [cand('B', 0)])
+
+    // 第 1 轮：A 超时
+    const p1 = resolveCandidates('w', 'e', [A, B], { timeoutMs: 30 })
+    await new Promise((r) => setTimeout(r, 60))
+    const res1 = await p1
+    expect(res1.candidates.map((c) => c.sourceId)).toEqual(['B'])
+
+    // 第 2 轮：只用 B（不含 A）
+    const res2 = await resolveCandidates('w', 'e', [B])
+    // 🔴 第 1 轮 A 的迟到结果没有污染第 2 轮
+    expect(res2.candidates.map((c) => c.sourceId)).toEqual(['B'])
+
+    // 现在才让第 1 轮的 A 返回
+    dA.resolve([cand('A', 0), cand('A', 1), cand('A', 2)])
+    await new Promise((r) => setTimeout(r, 20))
+
+    // 第 2 轮结果对象不会被事后改写
+    expect(res2.candidates.map((c) => c.sourceId)).toEqual(['B'])
+    expect(res1.candidates.map((c) => c.sourceId)).toEqual(['B'])
+  })
+
+  it('P16d 迟到候选不进入任何共享状态（结果对象冻结后不变）', async () => {
+    const dA = deferred<PlaybackCandidate[]>()
+    const A = mkResolver('A', () => dA.promise)
+    const B = mkResolver('B', async () => [cand('B', 0)])
+
+    const p = resolveCandidates('w', 'e', [A, B], { timeoutMs: 30 })
+    await new Promise((r) => setTimeout(r, 60))
+    const res = await p
+    const snapshotIds = res.candidates.map((c) => c.candidateId)
+    const snapshotLen = res.candidates.length
+
+    dA.resolve([cand('A', 0)])
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(res.candidates.length).toBe(snapshotLen)
+    expect(res.candidates.map((c) => c.candidateId)).toEqual(snapshotIds)
+  })
+})
+
+describe('P17 诊断事件生命周期（阻塞点 1）', () => {
+  it('P17a 正常路径：只有 settled，没有 timeout', async () => {
+    const events: ResolveEvent[] = []
+    const A = mkResolver('A', async () => [cand('A', 0)])
+    await resolveCandidates('w', 'e', [A], { onEvent: (e) => events.push(e) })
+
+    expect(events.filter((e) => e.type === 'resolve.timeout')).toHaveLength(0)
+    const settled = events.filter((e) => e.type === 'resolve.settled')
+    expect(settled).toHaveLength(1)
+    expect(settled[0]).toMatchObject({ sourceId: 'A', afterTimeout: false })
+  })
+
+  it('P17b 超时路径：timeout 先于 settled，且 settled.afterTimeout=true', async () => {
+    const events: ResolveEvent[] = []
+    const d = deferred<PlaybackCandidate[]>()
+    const A = mkResolver('A', () => d.promise)
+
+    const p = resolveCandidates('w', 'e', [A], { timeoutMs: 20, onEvent: (e) => events.push(e) })
+    await new Promise((r) => setTimeout(r, 40))
+
+    // 此刻：timeout 已发生，settled 还没发生
+    expect(events.filter((e) => e.type === 'resolve.timeout')).toHaveLength(1)
+    expect(events.filter((e) => e.type === 'resolve.settled')).toHaveLength(0)
+
+    d.resolve([cand('A', 0)])
+    await p
+    await new Promise((r) => setTimeout(r, 10))
+
+    const seq = events.map((e) => e.type)
+    expect(seq).toEqual(['resolve.timeout', 'resolve.settled'])
+    const settled = events.find((e) => e.type === 'resolve.settled')
+    expect(settled).toMatchObject({ afterTimeout: true })
+  })
+
+  it('P17c 每个源各自一对事件，不串源', async () => {
+    const events: ResolveEvent[] = []
+    const dA = deferred<PlaybackCandidate[]>()
+    const A = mkResolver('A', () => dA.promise)
+    const B = mkResolver('B', async () => [cand('B', 0)])
+
+    const p = resolveCandidates('w', 'e', [A, B], { timeoutMs: 20, onEvent: (e) => events.push(e) })
+    await new Promise((r) => setTimeout(r, 40))
+    dA.resolve([cand('A', 0)])
+    await p
+    await new Promise((r) => setTimeout(r, 10))
+
+    // A: timeout + settled(afterTimeout=true)
+    expect(events.filter((e) => e.sourceId === 'A' && e.type === 'resolve.timeout')).toHaveLength(1)
+    expect(events.filter((e) => e.sourceId === 'A' && e.type === 'resolve.settled')).toHaveLength(1)
+    // B: 只有 settled(afterTimeout=false)
+    expect(events.filter((e) => e.sourceId === 'B' && e.type === 'resolve.timeout')).toHaveLength(0)
+    const bSettled = events.find((e) => e.sourceId === 'B' && e.type === 'resolve.settled')
+    expect(bSettled).toMatchObject({ afterTimeout: false })
+  })
+})
+
+/* ══════════════════════════════════════════════════════════════════════
+ * 批次① 补充证据 ②：全局并发预算（用户验收阻塞点 2）
+ *
+ * 🔴 核心命题：预算必须在**多轮并发调用之间共享**，不能只在单次调用内有效。
+ * ══════════════════════════════════════════════════════════════════════ */
+
+describe('P18 全局并发预算（阻塞点 2）', () => {
+  it('P18a 上限值确认', () => {
+    expect(MAX_RESOLVE_CONCURRENT).toBe(4)
+  })
+
+  it('P18b 单次调用内部不超上限', async () => {
+    let peak = 0
+    const mk = (id: string) =>
+      mkResolver(id, async () => {
+        peak = Math.max(peak, __physicalActive())
+        await new Promise((r) => setTimeout(r, 15))
+        return [cand(id, 0)]
+      })
+    await resolveCandidates('w', 'e', Array.from({ length: 8 }, (_, i) => mk(`s${i}`)))
+    expect(peak).toBeLessThanOrEqual(MAX_RESOLVE_CONCURRENT)
+  })
+
+  it('P18c 多轮并发调用共享同一预算（关键）', async () => {
+    let peak = 0
+    const mk = (id: string) =>
+      mkResolver(id, async () => {
+        peak = Math.max(peak, __physicalActive())
+        await new Promise((r) => setTimeout(r, 30))
+        return [cand(id, 0)]
+      })
+
+    // 🔴 3 轮并发调用，每轮 4 个源 = 12 个底层请求
+    const rounds = [
+      resolveCandidates('w', 'e', [mk('a1'), mk('a2'), mk('a3'), mk('a4')]),
+      resolveCandidates('w', 'e', [mk('b1'), mk('b2'), mk('b3'), mk('b4')]),
+      resolveCandidates('w', 'e', [mk('c1'), mk('c2'), mk('c3'), mk('c4')]),
+    ]
+    await Promise.all(rounds)
+
+    // 若预算只在单次调用内有效，peak 会达到 12
+    expect(peak).toBeLessThanOrEqual(MAX_RESOLVE_CONCURRENT)
+    expect(peak).toBeGreaterThan(1)  // 确认确实并发了
+  })
+
+  it('P18d 达到上限时新请求排队（不是跳过，不是报错）', async () => {
+    const started: string[] = []
+    const gates: Array<() => void> = []
+    const mk = (id: string) =>
+      mkResolver(id, async () => {
+        started.push(id)
+        await new Promise<void>((r) => gates.push(r))
+        return [cand(id, 0)]
+      })
+
+    const p = resolveCandidates('w', 'e', Array.from({ length: 6 }, (_, i) => mk(`q${i}`)), {
+      timeoutMs: 5000,
+    })
+
+    await new Promise((r) => setTimeout(r, 30))
+    // 只有 4 个开始，2 个排队
+    expect(started.length).toBe(MAX_RESOLVE_CONCURRENT)
+
+    // 放开全部闸门，排队的会依次执行
+    while (gates.length > 0) {
+      const g = gates.shift()
+      g?.()
+      await new Promise((r) => setTimeout(r, 5))
+    }
+
+    const res = await p
+    expect(res.candidates).toHaveLength(6)   // 排队后全部完成，不是跳过
+    expect(started).toHaveLength(6)
+  })
+
+  it('P18e 超时但未 settle 的请求仍占用预算（跨调用可见）', async () => {
+    const d = deferred<PlaybackCandidate[]>()
+    const stuck = mkResolver('stuck', () => d.promise)
+
+    // 第 1 轮：stuck 超时，但底层不 settle
+    const r1 = await resolveCandidates('w', 'e', [stuck], { timeoutMs: 20 })
+    expect(r1.failed[0].code).toBe('RESOLVE_TIMEOUT')
+    // 🔴 名额仍被占
+    expect(__physicalActive()).toBe(1)
+
+    // 第 2 轮：占用预算的是上一轮的 stuck
+    let peak = 0
+    const mk = (id: string) =>
+      mkResolver(id, async () => {
+        peak = Math.max(peak, __physicalActive())
+        await new Promise((r) => setTimeout(r, 10))
+        return [cand(id, 0)]
+      })
+    await resolveCandidates('w', 'e', [mk('x1'), mk('x2'), mk('x3'), mk('x4')])
+    // 只剩 3 个名额 ⇒ peak 最多 4（含 stuck）
+    expect(peak).toBeLessThanOrEqual(MAX_RESOLVE_CONCURRENT)
+
+    d.resolve([cand('stuck', 0)])
+    await new Promise((r) => setTimeout(r, 20))
+    expect(__physicalActive()).toBe(0)
+  })
+
+  it('P18f 真实 settle 后排队请求继续执行', async () => {
+    const order: string[] = []
+    const mk = (id: string, gate: Promise<void>) =>
+      mkResolver(id, async () => {
+        order.push(id)
+        await gate
+        return [cand(id, 0)]
+      })
+
+    const d1 = deferred<void>()
+    const d2 = deferred<void>()
+    const d3 = deferred<void>()
+    const d4 = deferred<void>()
+    const d5 = deferred<void>()
+
+    const p = resolveCandidates(
+      'w',
+      'e',
+      [mk('r1', d1.promise), mk('r2', d2.promise), mk('r3', d3.promise), mk('r4', d4.promise), mk('r5', d5.promise)],
+      { timeoutMs: 5000 },
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    expect(order).toEqual(['r1', 'r2', 'r3', 'r4'])   // r5 排队
+
+    d1.resolve()   // 释放一个名额
+    await new Promise((r) => setTimeout(r, 20))
+    expect(order).toContain('r5')                     // r5 被唤醒
+
+    d2.resolve(); d3.resolve(); d4.resolve(); d5.resolve()
+    await p
+    expect(order).toHaveLength(5)
+  })
+
+  it('P18g 预算释放后归零（无泄漏）', async () => {
+    const before = __physicalActive()
+    const mk = (id: string) => mkResolver(id, async () => [cand(id, 0)])
+    await resolveCandidates('w', 'e', [mk('z1'), mk('z2')])
+    await new Promise((r) => setTimeout(r, 20))
+    expect(__physicalActive()).toBe(before)
+  })
+})
