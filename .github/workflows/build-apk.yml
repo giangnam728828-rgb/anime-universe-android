@@ -71,6 +71,12 @@ jobs:
             echo "no TRANS_API_KEY secret, keep placeholder"
           fi
 
+      # ★ 阶段3·第2步·播放源适配层：前端测试门槛
+      #   批次①② 之前 CI 从不运行 Vitest，导致 CI success 不等于测试通过。
+      #   此处不设 continue-on-error：测试失败必须阻断后续构建。
+      - name: Run frontend tests (Vitest)
+        run: npm test
+
       - name: Build web assets
         run: npm run build
 
