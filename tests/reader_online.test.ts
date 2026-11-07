@@ -18,6 +18,8 @@ import { LOCAL_SOURCE_ID } from '../src/modules/reader/readerRoute'
 const SRC = new URL('../src/modules/reader/', import.meta.url)
 const readerSrc = readFileSync(new URL('ReaderPage.tsx', SRC), 'utf-8')
 const hookSrc = readFileSync(new URL('useOnlineWindow.ts', SRC), 'utf-8')
+// 第9子步：窗口/淘汰/派发逻辑抽入纯模块，契约断言同步迁移
+const stateSrc = readFileSync(new URL('readerWindowState.ts', SRC), 'utf-8')
 
 /* ══════════════════ R1 · 本地阅读回归 ══════════════════ */
 
@@ -119,16 +121,18 @@ describe('R3 · 必须下载 Blob，不能热链', () => {
 /* ══════════════════ R4 · 窗口边界 ══════════════════ */
 
 describe('R4 · 窗口边界正确', () => {
+  // 第9子步：窗口计算迁入纯模块 readerWindowState.ts 的 windowRange()，
+  // 断言随之迁移（契约不变：下界 clamp 到 0、上界 clamp 到 total-1、只用窗口内页码）。
   it('R4a · 窗口下界 clamp 到 0（首屏不越界）', () => {
-    expect(hookSrc).toContain('Math.max(0, cur - win)')
+    expect(stateSrc).toContain('Math.max(0, cur - win)')
   })
 
   it('R4b · 窗口上界 clamp 到 total-1（末页不越界）', () => {
-    expect(hookSrc).toContain('Math.min(pages.total - 1, cur + win)')
+    expect(stateSrc).toContain('Math.min(total - 1, cur + win)')
   })
 
   it('R4c · 只请求窗口内的页（循环边界用 lo/hi）', () => {
-    expect(hookSrc).toMatch(/for \(let i = lo; i <= hi; i\+\+\)/)
+    expect(stateSrc).toMatch(/for \(let i = lo; i <= hi; i\+\+\)/)
   })
 
   it('R4d · 窗口半径由外部传入且等于 WINDOW', () => {
@@ -140,21 +144,25 @@ describe('R4 · 窗口边界正确', () => {
   })
 
   it('R4f · 窗口外 Blob 被丢弃（阈值 win+3，与本地 urlCache 一致）', () => {
-    expect(hookSrc).toContain('Math.abs(i - cur) > win + 3')
+    // 第9子步：淘汰逻辑迁入 readerWindowState.applyWindow()
+    expect(stateSrc).toContain('Math.abs(i - cur) > win + 3')
   })
 })
 
 /* ══════════════════ R5 · 并发与去重 ══════════════════ */
 
 describe('R5 · 并发与去重', () => {
-  it('R5a · 已请求过的页不重复发起（requested 集合）', () => {
-    expect(hookSrc).toContain('requested.current.has(i)')
-    expect(hookSrc).toContain('requested.current.add(i)')
+  it('R5a · 已请求过的页不重复发起（状态机 pagesToRequest）', () => {
+    // 第9子步：requested: Set<number> 被纯状态机取代。
+    // 原实现用「曾经请求过」的墓碑集合，正是 Bug A（翻回永久空白）的根因。
+    // 新契约：由 PageRecord.status 判定，只有 idle/无记录才可发起。
+    expect(hookSrc).toContain('pagesToRequest(')
+    expect(stateSrc).toContain("if (r.status === 'idle') { out.push(i); continue }")
   })
 
   it('R5b · 快速翻页不会重复下载同一页', () => {
-    // 逻辑：进入循环前先检查 requested，已在集合内则 continue
-    expect(hookSrc).toMatch(/if \(requested\.current\.has\(i\)\) continue/)
+    // 状态机层面：queued/loading/ready/failed 均不再发起
+    expect(stateSrc).toMatch(/queued \/ loading \/ ready \/ failed 都不再发起/)
   })
 
   it('R5c · 并发受 binaryHttp limiter 控制（不在本层自建并发）', () => {
@@ -185,11 +193,15 @@ describe('R6 · Object URL 与 Blob 回收', () => {
 
   it('R6d · 🔴 切章时 abort 进行中请求并清空 Blob', () => {
     expect(hookSrc).toContain('abortRef.current?.abort()')
-    expect(hookSrc).toContain('setBlobs(new Map())')
+    // 第9子步：setBlobs(new Map()) 改为状态机整表重置
+    expect(hookSrc).toContain('resetForChapter(st.current)')
+    expect(stateSrc).toContain('state.records.clear()')
   })
 
   it('R6e · 卸载后不再 setState（aliveRef 守卫）', () => {
-    expect(hookSrc).toContain('if (!aliveRef.current) return')
+    // 第9子步：原写法 `if (!aliveRef.current) return` 保留在卸载路径
+    expect(hookSrc).toContain('aliveRef.current = false')
+    expect(hookSrc).toContain('if (aliveRef.current) setViewVer')
   })
 
   it('R6f · chapterKey 变化触发清理（切章隔离）', () => {
@@ -202,7 +214,9 @@ describe('R6 · Object URL 与 Blob 回收', () => {
 
 describe('R7 · 失败不导致阅读器崩溃', () => {
   it('R7a · 图片失败只标记该页，不设 error 态', () => {
-    expect(hookSrc).toContain('setFailed((s) => { const n = new Set(s); n.add(i); return n })')
+    // 第9子步：失败标记收进状态机 markPageFailed（只改 status，不抛错、不设全局 error）
+    expect(hookSrc).toContain('markPageFailed(st.current, index)')
+    expect(stateSrc).toContain("r.status = 'failed'")
   })
 
   it('R7b · AbortError 不记为失败（正常流程）', () => {
@@ -210,7 +224,7 @@ describe('R7 · 失败不导致阅读器崩溃', () => {
     // 但 binaryHttp 的取消错误 name 是 'BinaryHttpAbortError'，
     // 字符串比较永远匹配不上 ⇒ 切章/卸载会被误记为失败（F5 根因）。
     // 现统一走 isAbortError()，断言同步收紧为「必须用统一判别 + 不得再用裸字符串比较」。
-    expect(hookSrc).toContain('if (isAbortError(e)) {')
+    expect(hookSrc).toContain('isAbortError(e)')
     expect(hookSrc).not.toContain("=== 'AbortError'")
   })
 

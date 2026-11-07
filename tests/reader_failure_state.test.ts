@@ -16,6 +16,9 @@ const readerSrc = readFileSync(
   new URL('../src/modules/reader/ReaderPage.tsx', import.meta.url), 'utf-8')
 const hookSrc = readFileSync(
   new URL('../src/modules/reader/useOnlineWindow.ts', import.meta.url), 'utf-8')
+// 第9子步：失败/重试状态收进纯状态机模块，契约断言同步迁移
+const stateSrc = readFileSync(
+  new URL('../src/modules/reader/readerWindowState.ts', import.meta.url), 'utf-8')
 
 /* ══════════════════ 失败集合语义（纯逻辑，复刻 hook 行为） ══════════════════ */
 
@@ -129,17 +132,25 @@ describe('F4 · 恢复网络后重试成功', () => {
     expect(s.failed.has(5)).toBe(false)
   })
 
-  it('F4b · retry 的 then 分支写入 blobs 并删除 pending', () => {
+  it('F4b · retry 走统一 dispatch（成功由 settleRequest 写 ready+blob）', () => {
+    // 第9子步：retry 不再有独立的 then 分支，改为 markRetry → dispatch，
+    // 成功后由 settleRequest 的 3a 分支统一写 status='ready' + blob。
     const i = hookSrc.indexOf('const retry = useCallback')
-    const body = hookSrc.slice(i, i + 900)
-    expect(body).toContain('setBlobs((m) => { const n = new Map(m); n.set(index, r.blob); return n })')
-    expect(body).toContain('n.delete(index)')
+    const body = hookSrc.slice(i, i + 700)
+    expect(body).toContain('markRetry(st.current, index)')
+    expect(body).toContain('dispatch(index, ref.url')
+    // 状态机侧：成功后写 ready 与 blob，pending 由 status 派生自动消失
+    expect(stateSrc).toContain("r.status = 'ready'")
+    expect(stateSrc).toContain('r.blob = result.blob')
   })
 
   it('F4c · retry 失败时重新记回失败（可再次重试）', () => {
-    const i = hookSrc.indexOf('const retry = useCallback')
-    const body = hookSrc.slice(i, i + 1200)
-    expect(body).toContain('setFailed((s) => { const n = new Set(s); n.add(index); return n })')
+    // 状态机侧：窗口内失败走 3b 分支写 failed，可再次 markRetry
+    expect(stateSrc).toContain("r.status = 'failed'")
+    expect(stateSrc).toContain('export function markRetry')
+    const i = stateSrc.indexOf('export function markRetry')
+    const body = stateSrc.slice(i, i + 400)
+    expect(body).toContain("r.status = 'queued'")   // 可再次进入调度
   })
 })
 
@@ -171,10 +182,14 @@ describe('F5 · AbortError 不误判为失败', () => {
     expect(isAbortError('AbortError')).toBe(false)
   })
 
-  it('F5e · 🔴 hook 两处 catch 都改用 isAbortError（不再用 name 字符串比较）', () => {
-    expect(hookSrc).toContain('if (isAbortError(e)) {')
-    expect(hookSrc).toContain('if (!isAbortError(e)) {')
+  it('F5e · 🔴 hook 用 isAbortError 判别取消（不再用 name 字符串比较）', () => {
+    // 第9子步：两处 catch 合并为一处统一 catch，判别仍走 isAbortError，
+    // 且取消后把页面从 failed 恢复为 idle（避免切章残留失败态）。
+    expect(hookSrc).toContain('const aborted = isAbortError(e)')
     expect(hookSrc).not.toContain("=== 'AbortError'")
+    const i = hookSrc.indexOf('const aborted = isAbortError(e)')
+    const body = hookSrc.slice(i, i + 600)
+    expect(body).toContain("rec.status = 'idle'")
   })
 
   it('F5f · 切章 effect 会 abort 在途请求（取消走正常路径）', () => {
