@@ -738,3 +738,118 @@ describe('P18 全局并发预算（阻塞点 2）', () => {
     expect(__physicalActive()).toBe(before)
   })
 })
+
+/* ══════════════════════════════════════════════════════════════════════
+ * 批次① 补充证据 ③：8000ms 时间语义（用户最终验收裁定）
+ *
+ * 🔴 核心命题：timeoutMs 覆盖「从开始解析到得到结果的总等待时间，包括排队」。
+ *    不能用「先排队再额外等 8 秒」。
+ * ══════════════════════════════════════════════════════════════════════ */
+
+describe('P19 超时覆盖排队时间（时间语义）', () => {
+  it('P19a 排队期间超时 ⇒ RESOLVE_TIMEOUT，且底层请求从未发出', async () => {
+    // 先占满 4 个名额（用 4 个永不 settle 的请求）
+    const blockers = Array.from({ length: MAX_RESOLVE_CONCURRENT }, (_, i) =>
+      mkResolver(`block${i}`, () => new Promise<PlaybackCandidate[]>(() => {})),
+    )
+    const blockP = resolveCandidates('w', 'e', blockers, { timeoutMs: 10000 })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(__physicalActive()).toBe(MAX_RESOLVE_CONCURRENT)
+
+    // 第 5 个源：必须排队。计时器从入口就启动 ⇒ 应在 50ms 内超时
+    let called = false
+    const queued = mkResolver('queued', async () => {
+      called = true
+      return [cand('queued', 0)]
+    })
+    const t0 = Date.now()
+    const res = await resolveCandidates('w', 'e', [queued], { timeoutMs: 50 })
+    const elapsed = Date.now() - t0
+
+    expect(res.failed[0].code).toBe('RESOLVE_TIMEOUT')
+    // 🔴 排队中就超时，底层请求从未发出
+    expect(called).toBe(false)
+    // 耗时接近 50ms（而不是排队很久 + 50ms）
+    expect(elapsed).toBeLessThan(300)
+    // 排队者不占名额
+    expect(__physicalActive()).toBe(MAX_RESOLVE_CONCURRENT)
+
+    void blockP
+  })
+
+  it('P19b 排队超时后安全移除 waiter，不留无效队列项', async () => {
+    const gates: Array<() => void> = []
+    const blockers = Array.from({ length: MAX_RESOLVE_CONCURRENT }, (_, i) =>
+      mkResolver(`b${i}`, async () => {
+        await new Promise<void>((r) => gates.push(r))
+        return [cand(`b${i}`, 0)]
+      }),
+    )
+    const blockP = resolveCandidates('w', 'e', blockers, { timeoutMs: 10000 })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(__physicalActive()).toBe(MAX_RESOLVE_CONCURRENT)
+
+    // 第 5、6 个源排队并超时
+    const q1 = mkResolver('q1', async () => [cand('q1', 0)])
+    const q2 = mkResolver('q2', async () => [cand('q2', 0)])
+    const r1 = await resolveCandidates('w', 'e', [q1], { timeoutMs: 30 })
+    const r2 = await resolveCandidates('w', 'e', [q2], { timeoutMs: 30 })
+    expect(r1.failed[0].code).toBe('RESOLVE_TIMEOUT')
+    expect(r2.failed[0].code).toBe('RESOLVE_TIMEOUT')
+
+    // 释放全部名额：不应唤醒已超时的排队项
+    while (gates.length > 0) {
+      const g = gates.shift()
+      g?.()
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    await blockP
+    await new Promise((r) => setTimeout(r, 30))
+    // 无泄漏：全部归零
+    expect(__physicalActive()).toBe(0)
+  })
+
+  it('P19c 已发出的请求超时后仍占名额（与排队超时区分）', async () => {
+    const d = deferred<PlaybackCandidate[]>()
+    const A = mkResolver('A', () => d.promise)
+    const res = await resolveCandidates('w', 'e', [A], { timeoutMs: 30 })
+    expect(res.failed[0].code).toBe('RESOLVE_TIMEOUT')
+    // 🔴 已发出 ⇒ 名额仍被占
+    expect(__physicalActive()).toBe(1)
+
+    d.resolve([cand('A', 0)])
+    await new Promise((r) => setTimeout(r, 20))
+    expect(__physicalActive()).toBe(0)
+  })
+
+  it('P19d 排队时间计入总等待（先排队再请求，总时长不超 timeoutMs 量级）', async () => {
+    // 占满 3 个名额，留 1 个
+    const gates: Array<() => void> = []
+    const blockers = Array.from({ length: MAX_RESOLVE_CONCURRENT - 1 }, (_, i) =>
+      mkResolver(`b${i}`, async () => {
+        await new Promise<void>((r) => gates.push(r))
+        return [cand(`b${i}`, 0)]
+      }),
+    )
+    const blockP = resolveCandidates('w', 'e', blockers, { timeoutMs: 10000 })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(__physicalActive()).toBe(MAX_RESOLVE_CONCURRENT - 1)
+
+    // 第 4 个源立即拿到最后名额，但请求慢
+    const slow = mkResolver('slow', () => new Promise<PlaybackCandidate[]>(() => {}))
+    const t0 = Date.now()
+    const r = await resolveCandidates('w', 'e', [slow], { timeoutMs: 60 })
+    const elapsed = Date.now() - t0
+
+    expect(r.failed[0].code).toBe('RESOLVE_TIMEOUT')
+    // 立即拿到名额 ⇒ 总耗时接近 60ms，不是 60 + 排队
+    expect(elapsed).toBeLessThan(400)
+
+    while (gates.length > 0) {
+      const g = gates.shift()
+      g?.()
+      await new Promise((rr) => setTimeout(rr, 5))
+    }
+    await blockP
+  })
+})

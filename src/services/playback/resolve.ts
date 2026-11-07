@@ -107,26 +107,60 @@ export type ResolveEvent =
  * 与第9子步 `imageScheduler.physicalActive` 同构。
  */
 let physicalActive = 0
-const waiters: Array<() => void> = []
 
-function acquire(): Promise<void> {
+/**
+ * 排队等待者。
+ *
+ * 🔴 每个 waiter 必须可**安全移除**（用户裁定：超时退出队列时不能留下无效队列项）。
+ * 用对象 + `cancelled` 标记而不是单纯函数，使 `release()` 能跳过已取消的项。
+ */
+interface Waiter {
+  grant: () => void
+  cancelled: boolean
+}
+const waiters: Waiter[] = []
+
+/**
+ * 取得物理名额。
+ *
+ * 返回 `{ promise, cancel }`：
+ *  - `promise` 在拿到名额时 resolve（此时 `physicalActive` 已 +1）
+ *  - `cancel()` 用于排队期间超时退出：从队列移除且**不影响** `physicalActive`
+ */
+function acquire(): { promise: Promise<void>; cancel: () => void } {
   if (physicalActive < MAX_RESOLVE_CONCURRENT) {
     physicalActive++
-    return Promise.resolve()
+    return { promise: Promise.resolve(), cancel: () => {} }
   }
   // 名额已满 ⇒ 排队（不通过增加并发掩盖问题）
-  return new Promise<void>((resolve) => {
-    waiters.push(() => {
+  let grant!: () => void
+  const promise = new Promise<void>((resolve) => {
+    grant = () => {
       physicalActive++
       resolve()
-    })
+    }
   })
+  const waiter: Waiter = { grant, cancelled: false }
+  waiters.push(waiter)
+  return {
+    promise,
+    cancel: () => {
+      waiter.cancelled = true
+      const i = waiters.indexOf(waiter)
+      if (i >= 0) waiters.splice(i, 1)
+    },
+  }
 }
 
 function release(): void {
   physicalActive = Math.max(0, physicalActive - 1)
-  const next = waiters.shift()
-  if (next) next()
+  // 跳过已取消的排队项，避免无效队列项占位
+  while (waiters.length > 0) {
+    const next = waiters.shift()!
+    if (next.cancelled) continue
+    next.grant()
+    return
+  }
 }
 
 /** 仅测试用：读取当前物理占用 */
@@ -180,10 +214,65 @@ async function resolveOne(
   timeoutMs: number,
   onEvent?: (e: ResolveEvent) => void,
 ): Promise<OneResult> {
-  await acquire()
-
+  /**
+   * 🔴 时间语义（用户批次① 最终验收裁定）：
+   *
+   *   `timeoutMs` 覆盖**从开始解析到得到结果的总等待时间，包括排队**。
+   *
+   *   因此计时器必须在 `acquire()` **之前**启动，不能用「先排队再额外等 8 秒」。
+   *
+   *   但两件事必须区分：
+   *     - 排队期间**尚未发出**底层请求 ⇒ 不占用 `physicalActive`
+   *     - 已发出的底层请求超时后 ⇒ 仍占用名额，直到真实 settle
+   *
+   *   排队中若超时 ⇒ 安全移除 waiter，不留无效队列项。
+   */
   let timedOut = false
   let settledOnce = false
+  let acquired = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  /** 排队句柄（acquire 后填充） */
+  let acquireHandle: { promise: Promise<void>; cancel: () => void } | null = null
+
+  /** 总超时计时器：从函数入口开始计时，覆盖排队 + 请求 */
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      onEvent?.({ type: 'resolve.timeout', sourceId: resolver.sourceId, waitedMs: timeoutMs })
+      // 若还在排队 ⇒ 立刻退出队列，不占名额、不发请求
+      if (!acquired && acquireHandle) acquireHandle.cancel()
+      reject(new Error('__RESOLVE_TIMEOUT__'))
+    }, timeoutMs)
+  })
+
+  // 先取名额（可能排队）；与 deadline 竞速，排队超时则放弃
+  acquireHandle = acquire()
+  try {
+    await Promise.race([acquireHandle.promise, deadline])
+  } catch {
+    // 排队期间就超时：名额从未取得 ⇒ 无需 release
+    if (timer) clearTimeout(timer)
+    return {
+      ok: false,
+      sourceId: resolver.sourceId,
+      code: 'RESOLVE_TIMEOUT',
+      message: `排队等待超过 ${timeoutMs}ms`,
+    }
+  }
+  acquired = true
+
+  // 若在排队期间已超时（deadline 先触发但 race 恰好 resolve），直接退出
+  if (timedOut) {
+    if (timer) clearTimeout(timer)
+    release()
+    return {
+      ok: false,
+      sourceId: resolver.sourceId,
+      code: 'RESOLVE_TIMEOUT',
+      message: `排队等待超过 ${timeoutMs}ms`,
+    }
+  }
 
   /** 幂等清理：同一个 Promise 只归还一次名额（检查点 B） */
   const cleanup = () => {
@@ -214,18 +303,10 @@ async function resolveOne(
     (e) => { cleanup(); throw e },
   )
 
-  // 逻辑超时：只是不再等待，**不**清理名额
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true
-      onEvent?.({ type: 'resolve.timeout', sourceId: resolver.sourceId, waitedMs: timeoutMs })
-      reject(new Error('__RESOLVE_TIMEOUT__'))
-    }, timeoutMs)
-  })
-
+  // 🔴 复用同一个 deadline（已在函数入口启动，覆盖排队 + 请求）
+  //    逻辑超时只是不再等待，**不**清理名额
   try {
-    const raw = await Promise.race([underlyingTracked, timeout])
+    const raw = await Promise.race([underlyingTracked, deadline])
     if (timer) clearTimeout(timer)
 
     // 🔴 迟到结果隔离：若此刻已超时，即使 race 先返回也不得采纳
