@@ -8,6 +8,7 @@ import SourceBadge from '../../components/SourceBadge'
 import SmartImage from '../../components/SmartImage'
 import { isFavorited, toggleFavorite } from '../../database/db'
 import { createToken, peek, type EntrySnapshot, type RouteIdentity } from './searchSession'
+import ChapterList, { sourceSupportsChapters } from './ChapterList'
 
 export const favKeyOf = (sourceId: string, kind: string, workId: string) => `${sourceId}-${kind}-${workId}`
 
@@ -187,9 +188,23 @@ export default function DetailPage() {
       )}
 
       <Section title="观看 / 阅读">
-        <EmptyState icon="film"
-          title={d.kind === 'anime' ? '正片播放待开发' : '漫画阅读待开发'}
-          desc={'资料源不提供正片播放或漫画阅读。\n正片播放与漫画阅读器将按规划在阶段 4/后续实现。\n阅读功能只会使用合法开放来源或本地导入内容。'} />
+        {/*
+          P1 第7子步：漫画且有章节能力时，渲染真实章节列表。
+          条件严格限定：kind === 'manga' && 适配器实现 getChapters && 有 workId。
+          其他情况保持原有说明，不误显示章节。
+        */}
+        {d.kind === 'manga' && !!d.workId && sourceSupportsChapters(d.sourceId) ? (
+          <ChapterList
+            sourceId={d.sourceId}
+            kind={d.kind}
+            workId={d.workId}
+            fromPath={location.pathname}
+          />
+        ) : (
+          <EmptyState icon="film"
+            title={d.kind === 'anime' ? '正片播放待开发' : '漫画阅读待开发'}
+            desc={'资料源不提供正片播放或漫画阅读。\n正片播放与漫画阅读器将按规划在阶段 4/后续实现。\n阅读功能只会使用合法开放来源或本地导入内容。'} />
+        )}
       </Section>
 
       <Modal open={note} onClose={() => setNote(false)} title="关于数据来源">
