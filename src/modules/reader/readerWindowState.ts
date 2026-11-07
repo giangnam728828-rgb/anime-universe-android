@@ -186,6 +186,51 @@ export function applyWindow(
 }
 
 /* ══════════════════════════════════════════════════════════════════════
+ * T4：窗口移动时取消「尚未启动」的排队需求
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 返回应当取消的页码：**仍在排队（queued）但已离开窗口**。
+ *
+ * 依据方案 §3.4 T4：
+ *   `queued` 尚未真正调用 `getBinary`，不占物理名额，出队零成本。
+ *
+ * 🔴 绝不取消 `loading`：
+ *   已启动的请求即使离窗也只能标 `stale`，物理名额必须保留到 Promise settle
+ *   （CapacitorHttp 无真中断能力，提前归还名额会让物理并发翻倍）。
+ *   因此本函数**只返回 queued**。
+ */
+export function cancellableQueued(
+  state: WindowState,
+  cur: number,
+  total: number,
+  win: number,
+): number[] {
+  const [lo, hi] = windowRange(cur, total, win)
+  const out: number[] = []
+  for (const [i, r] of state.records) {
+    if (r.status !== 'queued') continue
+    if (i >= lo && i <= hi) continue
+    out.push(i)
+  }
+  return out
+}
+
+/**
+ * 取消一页的排队需求：回退到 `idle` 并清空错误。
+ *
+ * ⚠️ 只对 `queued` 生效；对 `loading` 调用是无效操作（保护物理名额）。
+ */
+export function cancelQueued(state: WindowState, i: number): boolean {
+  const r = state.records.get(i)
+  if (!r || r.status !== 'queued') return false
+  r.status = 'idle'
+  r.blob = undefined
+  r.error = undefined
+  return true
+}
+
+/* ══════════════════════════════════════════════════════════════════════
  * 调度决策：哪些页需要（重新）发起请求
  * ══════════════════════════════════════════════════════════════════════ */
 

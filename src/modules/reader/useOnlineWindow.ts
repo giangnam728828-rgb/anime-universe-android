@@ -54,6 +54,8 @@ import { getOnlinePageBlob, type OnlinePagesResult } from '../../services/reader
 import { isAbortError } from '../../services/api/abortError'
 import {
   applyWindow,
+  cancelQueued,
+  cancellableQueued,
   createWindowState,
   deriveBlobs,
   deriveFailed,
@@ -109,6 +111,18 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
 
   /** 当前章节的 AbortController，切章/卸载时统一 abort */
   const abortRef = useRef<AbortController | null>(null)
+  /**
+   * 每页独立的 AbortController（P2 §3.4）。
+   *
+   * 为什么不能只用一个章节级 signal：
+   *   窗口移动时需要「只取消离开窗口的那几页」，章节级 signal 会连窗口内的页一起杀掉。
+   *
+   * 取消的两种语义（方案 §3.4.1，不可混淆）：
+   *   - 仍在调度器队列里（未启动）⇒ 立即出队，零成本，物理名额未占
+   *   - 已启动（loading）⇒ 只标 stale，**物理名额保留到 Promise settle**
+   *     （CapacitorHttp 无真中断能力，提前归还名额会让物理并发翻倍）
+   */
+  const pageAborts = useRef<Map<number, AbortController>>(new Map())
   /** 防止已卸载后 setState */
   const aliveRef = useRef(true)
   /** 当前页快照，供 settle 时判定「是否仍在窗口内」 */
@@ -129,7 +143,17 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
    */
   const dispatch = useCallback((index: number, url: string, timeoutMs?: number) => {
     const inf: InflightRequest = startRequest(st.current, index)
-    const signal = abortRef.current?.signal
+
+    // 每页独立 controller，并跟随章节级 signal
+    pageAborts.current.get(index)?.abort()
+    const ac = new AbortController()
+    const chapterSignal = abortRef.current?.signal
+    if (chapterSignal) {
+      if (chapterSignal.aborted) ac.abort()
+      else chapterSignal.addEventListener('abort', () => ac.abort(), { once: true })
+    }
+    pageAborts.current.set(index, ac)
+    const signal = ac.signal
 
     // 先把「已派发」这个事实反映到 UI（loading），再发请求
     setViewVer((v) => v + 1)
@@ -139,6 +163,7 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
         // 🔴 S2 → S3 必须在同一同步调用栈内连续执行，中间不得让出。
         //    settleRequest 内部完成 S2（按 reqId 删 inflight）与 S3（reconcile），
         //    此处不得插入 await / 用户回调 / 事件派发。
+        if (pageAborts.current.get(index) === ac) pageAborts.current.delete(index)
         settleRequest(st.current, index, inf, { ok: true, blob: r.blob })
         // S4：状态已 reconcile，才通知外部并继续调度
         if (aliveRef.current) setViewVer((v) => v + 1)
@@ -147,6 +172,7 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
       .catch((e: unknown) => {
         // abort 属正常流程（切章/卸载/窗口移动），不记为失败
         const aborted = isAbortError(e)
+        if (pageAborts.current.get(index) === ac) pageAborts.current.delete(index)
         settleRequest(st.current, index, inf, { ok: false, error: e })
         // AbortError 不把页面标成 failed —— 回到 idle 等重新调度
         if (aborted) {
@@ -188,6 +214,7 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
 
     abortRef.current?.abort()
     abortRef.current = new AbortController()
+    pageAborts.current.clear()
 
     rerenderAll()
     // 新章节的窗口需求由下面的窗口 effect 触发
@@ -196,6 +223,7 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
       aliveRef.current = false
       abortRef.current?.abort()
       abortRef.current = null
+      pageAborts.current.clear()
       resetForChapter(st.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -206,6 +234,15 @@ export function useOnlineWindow(opts: UseOnlineWindowOptions): OnlineWindowState
     if (!enabled || !pages || pages.total === 0) return
 
     applyWindow(st.current, cur, pages.total, win)
+
+    // T4（方案 §3.4）：离窗的「排队中」需求立即出队，把名额让给新的当前页。
+    // ⚠️ 只取消 queued；loading 已启动，物理名额必须保留到 settle。
+    for (const i of cancellableQueued(st.current, cur, pages.total, win)) {
+      cancelQueued(st.current, i)
+      pageAborts.current.get(i)?.abort()
+      pageAborts.current.delete(i)
+    }
+
     rerenderAll()
     pump()
   }, [enabled, pages, cur, win, pump, rerenderAll])
