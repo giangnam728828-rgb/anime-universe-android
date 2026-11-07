@@ -337,7 +337,10 @@ describe('P27 冻结边界', () => {
   })
 
   it('P27c 自检素材常量仍在（未被删除）', () => {
-    const src = readFileSync(join(SRC, 'modules/player/PlayerPage.tsx'), 'utf-8')
-    expect(src).toContain('SELF_TEST_ASSET')
+    // 批次③ 起常量迁到 playerFlow.ts（PlayerPage 改为经它取），
+    // 断言随之改为「两处之一必须持有」，保证素材本身不被删除。
+    const flow = readFileSync(join(SRC, 'modules/player/playerFlow.ts'), 'utf-8')
+    expect(flow).toContain('SELF_TEST_ASSET')
+    expect(flow).toContain('asset:///')
   })
 })

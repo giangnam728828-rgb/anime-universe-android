@@ -1,17 +1,25 @@
 /**
- * 播放专项阶段1 —— 播放页（React 侧）
+ * 播放专项阶段1 → 阶段3第2步批次③ —— 播放页（React 侧）
  *
- * 职责（用户 P5 裁定）：
+ * 职责（用户 P5 裁定 + 批次③ 授权）：
  *  - 负责进入播放流程、传递作品与剧集信息
  *  - 原生 Activity 负责视频呈现与播放控制
+ *  - **不解析播放源**：解析、会话、候选全部经 `playerFlow.ts`
  *
  * 🔒 路由只承载稳定 ID（sourceId / workId / episodeId），
  *    不放 URL / Cookie / Token / 签名参数。
  *
- * 阶段1 范围：不接任何第三方播放源，仅验证原生播放器链路。
+ * ══════════════════════════════════════════════════════════════════════
+ * 批次③ 新增：两种模式严格隔离
+ * ══════════════════════════════════════════════════════════════════════
+ *   real     真实播放：enabledResolvers → 聚合 → 会话 → 当前候选 URL
+ *   selftest 自检：APK 内置 asset:///test.mp4
+ *
+ * 🔴 真实播放失败**绝不**回退自检素材
+ *    —— 避免把播放源故障伪装成播放成功（用户批次③ 硬约束）
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   isNativePlayerAvailable,
@@ -21,23 +29,15 @@ import {
 } from '../../services/playback/nativeBridge'
 import { clearSession, setPlaybackState } from '../../services/playback/PlaybackService'
 import type { PlaybackErrorCode, PlaybackState } from '../../services/playback/types'
-
-/** 阶段1 自检素材：随插件源码入库的自制测试视频（见 native-plugins/media3-player/android/src/main/assets） */
-const SELF_TEST_ASSET = 'test.mp4'
-
-/**
- * ★ v2 裁定：APK 内置素材必须使用 `asset:///` URI（Media3 AssetDataSource）。
- *
- * 禁止使用 `window.location.origin`：
- *   本项目 capacitor.config.ts 设 androidScheme='https'，
- *   window.location.origin === 'https://localhost'，
- *   该地址只在 WebView 内部可达，**原生进程无法访问**，
- *   会使 Media3 走 DefaultHttpDataSource 发起真实网络请求并失败
- *   （这正是上一轮 MEDIA_LOAD_FAILED「网络加载失败」的根因）。
- *
- * APK 内路径 assets/test.mp4 ↔ URI asset:///test.mp4
- */
-const SELF_TEST_ASSET_URI = `asset:///${SELF_TEST_ASSET}`
+import {
+  listCandidateOptions,
+  prepareRealPlayback,
+  prepareSelfTestPlayback,
+  switchCandidate,
+  type CandidateOption,
+  type NativePlaybackParams,
+  type PlayerMode,
+} from './playerFlow'
 
 export function PlayerPage() {
   const { sourceId, workId, episodeId } = useParams<{
@@ -51,6 +51,21 @@ export function PlayerPage() {
   const [errorCode, setErrorCode] = useState<PlaybackErrorCode | null>(null)
   const [errorMsg, setErrorMsg] = useState<string>('')
   const [nativeOk] = useState<boolean>(() => isNativePlayerAvailable())
+
+  /** 当前模式；未播放过时为 null（不预设，避免误显示） */
+  const [mode, setMode] = useState<PlayerMode | null>(null)
+  /** 真实解析中 */
+  const [resolving, setResolving] = useState(false)
+  /** 解析失败文案（不含 URL） */
+  const [resolveError, setResolveError] = useState<string>('')
+  /** 可切换候选（不含 URL） */
+  const [options, setOptions] = useState<CandidateOption[]>([])
+
+  /** 页面存活标记：解析期间卸载则丢弃迟到结果 */
+  const aliveRef = useRef(true)
+
+  const wId = workId ?? 'unknown'
+  const eId = episodeId ?? 'unknown'
 
   // 订阅原生事件
   useEffect(() => {
@@ -72,6 +87,7 @@ export function PlayerPage() {
         setErrorMsg(d.errorMessage ?? '')
         setState('error')
         setPlaybackState('error')
+        // 🔴 真实播放失败：只显示错误，绝不回退自检素材
       })
       offClosed = await onNativePlaybackEvent('playbackClosed', () => {
         if (!alive) return
@@ -88,36 +104,113 @@ export function PlayerPage() {
     }
   }, [])
 
-  // 页面卸载时清理会话（丢弃临时地址）
+  // 页面卸载：清理会话（丢弃临时地址）+ 标记失效
   useEffect(() => {
+    aliveRef.current = true
     return () => {
+      aliveRef.current = false
       clearSession()
     }
   }, [])
 
-  /** 阶段1 自检：用随包素材验证原生播放链路 */
-  const handleSelfTest = useCallback(async () => {
+  /** 清空错误状态 */
+  const resetErrors = useCallback(() => {
     setErrorCode(null)
     setErrorMsg('')
+    setResolveError('')
+  }, [])
+
+  /** 把参数交给原生播放器 */
+  const openWith = useCallback(async (params: NativePlaybackParams) => {
+    await openNativePlayer({
+      sourceId: params.sourceId,
+      workId: params.workId,
+      episodeId: params.episodeId,
+      url: params.url,
+      uriKind: params.uriKind,
+      headers: params.headers,
+      title: params.title,
+    })
+  }, [])
+
+  /**
+   * 真实播放。
+   *
+   * 🔴 失败路径不含任何 `prepareSelfTestPlayback` 调用。
+   */
+  const handleRealPlay = useCallback(async () => {
+    resetErrors()
+    setMode('real')
+    setResolving(true)
+    setOptions([])
     try {
-      await openNativePlayer({
-        sourceId: sourceId ?? 'selftest',
-        workId: workId ?? 'selftest',
-        episodeId: episodeId ?? '1',
-        // ★ v2：显式声明为 APK 内置资源，使用 asset:/// scheme
-        url: SELF_TEST_ASSET_URI,
-        uriKind: 'asset',
-        title: '阶段1 自检素材',
-      })
+      const r = await prepareRealPlayback(wId, eId)
+
+      // 🔴 解析期间页面已卸载 ⇒ 丢弃迟到结果，不建立新会话
+      if (!aliveRef.current) return
+
+      if (!r.ok) {
+        setResolveError(r.message)
+        setState('error')
+        return
+      }
+
+      setOptions(listCandidateOptions())
+      await openWith(r.params)
+    } catch (e) {
+      if (!aliveRef.current) return
+      setErrorCode('ACTIVITY_LAUNCH_FAILED')
+      setErrorMsg(e instanceof Error ? e.message : String(e))
+      setState('error')
+    } finally {
+      if (aliveRef.current) setResolving(false)
+    }
+  }, [wId, eId, resetErrors, openWith])
+
+  /**
+   * 自检播放。
+   *
+   * 🔴 与 real 完全隔离：不解析、不建会话、不发网络请求。
+   */
+  const handleSelfTest = useCallback(async () => {
+    resetErrors()
+    setMode('selftest')
+    setOptions([])
+    try {
+      await openWith(prepareSelfTestPlayback(wId, eId))
     } catch (e) {
       setErrorCode('ACTIVITY_LAUNCH_FAILED')
       setErrorMsg(e instanceof Error ? e.message : String(e))
     }
-  }, [sourceId, workId, episodeId])
+  }, [wId, eId, resetErrors, openWith])
+
+  /** 切换线路 */
+  const handleSwitch = useCallback(
+    async (candidateId: string) => {
+      resetErrors()
+      const r = switchCandidate(candidateId, wId, eId)
+      if (!r.ok) {
+        setResolveError(r.message)
+        return
+      }
+      setOptions(listCandidateOptions())
+      try {
+        await openWith(r.params)
+      } catch (e) {
+        setErrorCode('ACTIVITY_LAUNCH_FAILED')
+        setErrorMsg(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [wId, eId, resetErrors, openWith],
+  )
 
   const handleStop = useCallback(async () => {
     await stopNativePlayer()
+    clearSession()
+    setOptions([])
   }, [])
+
+  const canSwitch = options.length > 1
 
   return (
     <div style={{ padding: 24, color: '#E8E8F0', maxWidth: 720, margin: '0 auto' }}>
@@ -138,7 +231,7 @@ export function PlayerPage() {
 
       <h2 style={{ margin: '0 0 8px' }}>原生播放器</h2>
       <p style={{ color: '#8A8A99', fontSize: 13, margin: '0 0 24px' }}>
-        播放专项阶段1 · 链路自检（不接入任何第三方播放源）
+        真实播放经多源解析与会话选择；自检素材仅用于验证原生链路
       </p>
 
       <div
@@ -152,17 +245,28 @@ export function PlayerPage() {
           lineHeight: 1.9,
         }}
       >
-        <Row label="sourceId" value={sourceId ?? '—'} />
+        {/* 路由参数里的 sourceId 是「内容来源」，不是播放来源 */}
+        <Row label="内容来源 sourceId" value={sourceId ?? '—'} />
         <Row label="workId" value={workId ?? '—'} />
         <Row label="episodeId" value={episodeId ?? '—'} />
+        <Row label="播放模式" value={mode ?? '未开始'} />
         <Row label="原生插件" value={nativeOk ? '可用' : '不可用（Web 预览）'} />
-        <Row label="播放状态" value={state} />
+        <Row label="播放状态" value={resolving ? '解析中…' : state} />
+        {canSwitch && <Row label="可用线路" value={`${options.length} 条`} />}
+        {resolveError && <Row label="解析结果" value={resolveError} danger />}
         {errorCode && <Row label="错误码" value={errorCode} danger />}
         {errorMsg && <Row label="错误信息" value={errorMsg} danger />}
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={handleSelfTest} disabled={!nativeOk} style={btnPrimary(nativeOk)}>
+        <button
+          onClick={handleRealPlay}
+          disabled={!nativeOk || resolving}
+          style={btnPrimary(nativeOk && !resolving)}
+        >
+          {resolving ? '解析中…' : '播放本集'}
+        </button>
+        <button onClick={handleSelfTest} disabled={!nativeOk} style={btnGhost(nativeOk)}>
           播放自检素材
         </button>
         <button onClick={handleStop} disabled={!nativeOk} style={btnGhost(nativeOk)}>
@@ -170,11 +274,29 @@ export function PlayerPage() {
         </button>
       </div>
 
+      {/* 多线路切换：仅在真实播放且有多条候选时显示 */}
+      {canSwitch && (
+        <div style={{ marginTop: 20 }}>
+          <p style={{ color: '#8A8A99', fontSize: 13, margin: '0 0 8px' }}>切换线路</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {options.map((o) => (
+              <button
+                key={o.candidateId}
+                onClick={() => handleSwitch(o.candidateId)}
+                style={o.selected ? btnPrimary(true) : btnGhost(true)}
+              >
+                {o.sourceName}
+                {o.protocol === 'hls' ? ' · HLS' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <p style={{ color: '#5A5A68', fontSize: 12, marginTop: 24, lineHeight: 1.8 }}>
-        阶段1 只验收：Activity 开关 · 本地 MP4 · 播放暂停 · 进度拖动 · 横屏全屏 · 音频焦点 ·
-        资源释放 · 错误回传。
+        真实播放失败时只显示错误，不会自动改用自检素材。
         <br />
-        HLS、字幕、音轨、竖屏预览、多线路切换不在本阶段范围。
+        播放地址仅存在于内存会话，不写入任何持久化存储。
       </p>
     </div>
   )
