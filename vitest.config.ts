@@ -37,6 +37,9 @@ export default {
       { find: /^@capacitor\/browser$/, replacement: `${FALLBACK}/@capacitor/browser` },
       { find: /^@capacitor\/filesystem$/, replacement: `${FALLBACK}/@capacitor/filesystem` },
       { find: /^@capacitor\/share$/, replacement: `${FALLBACK}/@capacitor/share` },
+      // Q9 AST 守卫需要 TypeScript 编译器 API（devDependency，已在 package.json）。
+      // 仓库内无 node_modules 时同样回退到影子副本。
+      { find: /^typescript$/, replacement: `${FALLBACK}/typescript` },
     ],
   },
   test: {

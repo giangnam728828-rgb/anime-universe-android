@@ -374,8 +374,11 @@ describe('C-extra · 失败冷却与请求去重（防请求风暴）', () => {
     expect(cache.size()).toBe(0)
   })
 
-  it('E7 · 并发闸门存在（复用 MAX_CONCURRENCY=4）', () => {
-    expect(coverSvcSrc).toContain('createLimiter(MAX_CONCURRENCY)')
-    expect(coverSvcSrc).toContain('coverLimiter(')
+  it('E7 · 封面请求走共享调度器（cover 优先级）', () => {
+    // 第9子步 · 批次①：封面不再自开 createLimiter(MAX_CONCURRENCY)，
+    // 改为与正文共用 imageScheduler，以避免「两个闸门各 4 ⇒ 并发 8」并保证正文优先。
+    // ⚠️ 这不是放宽断言，而是修正旧契约（旧契约断言的正是被替换掉的实现）。
+    expect(coverSvcSrc).not.toContain('createLimiter(MAX_CONCURRENCY)')
+    expect(coverSvcSrc).toContain("imageScheduler.run('cover'")
   })
 })

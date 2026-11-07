@@ -36,7 +36,8 @@
  *  - 进行中请求去重；失败进入冷却期，避免滚动时无限重试风暴
  *  - LRU 上限：超出只**丢弃 Blob 引用**，绝不 revoke 消费者已持有的 Object URL
  */
-import { getBinary, createLimiter, MAX_CONCURRENCY } from '../api/binaryHttp'
+import { getBinary } from '../api/binaryHttp'
+import { imageScheduler } from '../api/imageScheduler'
 import { isAbortError } from '../api/abortError'
 import { MANGADEX_USER_AGENT } from '../sources/mangadex'
 
@@ -81,14 +82,15 @@ export function isMangadexCover(sourceId: string | undefined, coverUrl: string |
  * ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * 封面专用并发闸门。
+ * 封面并发闸门（第9子步 · 批次①）。
  *
- * 为什么不与正文图片共用 onlineChapters 的 limiter：
- *   两者属于不同生命周期（列表页 / 阅读器），极少同时活跃；
- *   共用需要跨模块导出可变单例，会让两个子步的耦合度上升。
- *   这里独立取 MAX_CONCURRENCY(=4)，与 MangaDex「约 5 req/s/IP」留同样余量。
+ * 为什么改为与正文共用 `imageScheduler`：
+ *   原先封面与正文各开一个闸门（各 4）⇒ 理论并发 8，且**封面可能抢占正文名额**。
+ *   共享调度器后全 App 图片并发 ≤ 6，且正文 `reader` 优先于封面 `cover`；
+ *   封面等待超过 3s 可「老化提升」越过正文，但最多占 1 个名额，不会被永久饿死。
+ *   已核实 `getBinary()` 内部没有任何并发控制（`binaryHttp` 冻结区零改动）。
  */
-const coverLimiter = createLimiter(MAX_CONCURRENCY)
+
 
 /* ══════════════════════════════════════════════════════════════════════
  * 缓存实现
@@ -137,7 +139,9 @@ export interface CoverCacheDeps {
 
 /** 生产用下载实现：固定 MangaDex UA，禁止调用方覆盖 */
 async function defaultFetchBlob(url: string): Promise<Blob> {
-  const r = await coverLimiter(() =>
+  // ⚠️ `getBinary` 必须**直接**位于 `imageScheduler.run` 的第二个实参回调内
+  //    （AST 守卫 Q9 强制；不要再包本地 helper）
+  const r = await imageScheduler.run('cover', () =>
     getBinary(url, {
       userAgent: MANGADEX_USER_AGENT,
       timeoutMs: COVER_TIMEOUT_MS,

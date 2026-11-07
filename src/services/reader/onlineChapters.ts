@@ -47,7 +47,8 @@
  *     在线阅读的 `${sourceId}-${mangaId}` 与其格式一致，风格统一。
  */
 
-import { getBinary, createLimiter, createInflight, type BinaryResult } from '../api/binaryHttp'
+import { getBinary, createInflight, type BinaryResult } from '../api/binaryHttp'
+import { imageScheduler } from '../api/imageScheduler'
 import { MANGADEX_USER_AGENT } from '../sources/mangadex'
 import type { ChapterItem, PageItem } from '../sources/types'
 
@@ -326,12 +327,6 @@ export function chineseStats(list: OnlineChapter[]): {
  * 图片字节下载（重量，按需）
  * ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * MangaDex 限流约 5 req/s/IP。
- * 图片下载用 4，给章节列表等其它请求留余量。
- */
-const limiter = createLimiter(4)
-
 /** 同一张图进行中的请求去重（快速来回滑动时避免重复下载） */
 const inflight = createInflight()
 
@@ -356,14 +351,31 @@ export async function getOnlinePageBlob(
 ): Promise<OnlineBlobResult> {
   const t0 = Date.now()
 
+  // 第9子步 · 批次①：图片请求统一走 `imageScheduler`（正文优先级）。
+  //
+  // 为什么不再用本地 `createLimiter`：
+  //   封面（`mangadexCover`）原本另开一个闸门，两者各 4 ⇒ 理论并发 8，
+  //   且封面可能抢占正文名额。改用共享调度器后：
+  //     - 全 App 图片并发 ≤ 6（`DEFAULT_MAX_CONCURRENT`）
+  //     - 正文 `reader` 优先于封面 `cover`
+  //   已核实 `getBinary()` 内部没有任何并发控制（`binaryHttp` 冻结区零改动），
+  //   所以这里是**替换**调用方闸门，不是叠加。
+  //
+  // ⚠️ `getBinary` 必须**直接**位于 `imageScheduler.run` 的第二个实参回调内
+  //    （AST 守卫 Q9 会强制这一点，见 tests/image_scheduler.test.ts）。
+  //    不要为了「复用」再包一层本地 helper，否则守卫会拒绝。
   const run = (): Promise<BinaryResult> =>
-    limiter(() =>
-      getBinary(url, {
-        userAgent: MANGADEX_USER_AGENT,   // ★ UA-4：API 与图片共用同一身份
-        timeoutMs: opts?.timeoutMs ?? 20000,
-        signal: opts?.signal,
-        acceptMimePrefixes: ['image/'],
-      }),
+    imageScheduler.run(
+      'reader',
+      () =>
+        getBinary(url, {
+          userAgent: MANGADEX_USER_AGENT,   // ★ UA-4：API 与图片共用同一身份
+          timeoutMs: opts?.timeoutMs ?? 20000,
+          signal: opts?.signal,
+          acceptMimePrefixes: ['image/'],
+        }),
+      // ★ 排队期间可立即出队；一旦启动，名额锁定到 settle（方案 §3.4.1）
+      opts?.signal,
     )
 
   // 已取消的请求不进入去重表（避免把取消错误传染给并发调用者）
