@@ -4,7 +4,7 @@ import { Chip, EmptyState, Section, Loading } from '../../components/ui'
 import WorkCard from '../../components/WorkCard'
 import type { WorkItem, Kind } from '../../services/sources'
 import { GENRE_MAP } from '../../services/sources/anilist'
-import { pickViewState, useDiscoverFeed } from './useDiscoverFeed'
+import { useDiscoverFeed } from './useDiscoverFeed'
 
 const SORTS = ['热门', '最新', '评分'] as const
 
@@ -15,14 +15,8 @@ export default function DiscoveryPage() {
   const [sort, setSort] = useState<(typeof SORTS)[number]>('热门')
 
   // 阶段3第6步：渐进渲染 + 来源开关 + 健康记忆 + 发现页专用请求策略
-  const { items, loading, error, failed, blocked, retry } = useDiscoverFeed(type, genreEn, sort)
-  const view = pickViewState({
-    blocked,
-    loading,
-    error,
-    failedCount: failed.length,
-    itemCount: items.length,
-  })
+  // 方案丙 v3：hook 直接给出 view / status（快照与生命周期已解耦）
+  const { items, error, failed, blocked, view, status, retry } = useDiscoverFeed(type, genreEn, sort)
 
   const open = (w: WorkItem) => nav(`/detail/${w.sourceId}/${w.kind}/${w.workId}`)
 
@@ -60,32 +54,42 @@ export default function DiscoveryPage() {
           <Loading />
         ) : view === 'error' ? (
           <EmptyState icon="info" title="加载失败" desc={error ?? ''} actionText="重试" onAction={retry} />
-        ) : view === 'all-failed' ? (
+        ) : view === 'no-result' ? (
           <EmptyState
             icon="info"
-            title="加载失败"
-            desc={`全部来源请求失败：${failed.join('、')}`}
+            title="暂无可展示结果"
+            desc={
+              failed.length > 0
+                ? `部分来源加载失败：${failed.join('、')}`
+                : '请稍后重试。'
+            }
             actionText="重试"
             onAction={retry}
           />
-        ) : view === 'grid' ? (
+        ) : view === 'unconfirmed' ? (
+          <EmptyState
+            icon="compass"
+            title="本次未获得可展示结果"
+            desc="暂时无法确认该条件下是否有内容，可稍后重试。"
+            actionText="重试"
+            onAction={retry}
+          />
+        ) : (
           <>
             <div className="work-grid">
               {items.map((w) => <WorkCard key={w.sourceId + w.workId} w={w} onClick={() => open(w)} />)}
             </div>
-            {loading && (
+            {status.kind !== 'none' && (
               <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginTop: 8 }}>
-                仍在加载其他来源…
+                {status.text}
               </div>
             )}
-            {!loading && failed.length > 0 && (
-              <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginTop: 8 }}>
+            {status.kind !== 'none' && failed.length > 0 && status.kind !== 'partial-failure' && (
+              <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginTop: 4 }}>
                 {failed.join('、')} 未返回
               </div>
             )}
           </>
-        ) : (
-          <EmptyState icon="compass" title="没有找到作品" desc="换个分类或排序试试。" />
         )}
       </Section>
     </>
