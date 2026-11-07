@@ -14,6 +14,30 @@ import type { SourceAdapter, WorkItem, WorkDetail, SearchOptions, SearchResult, 
 const BASE = 'https://api.mangadex.org'
 
 /* ══════════════════════════════════════════════════════════════
+ * MangaDex 专用 User-Agent（阶段3·功能主线恢复·P1 第2子步）
+ *
+ * 🔴 为什么必须单独定义，不复用 nativeHttp.ts 的全局 UA
+ *   MangaDex 条款（https://api.mangadex.org/docs/2-limitations/）原文：
+ *     "The request MUST have a User-Agent header, and it must not be spoofed"
+ *     "The request CANNOT have a Via header"
+ *
+ *   全局 UA 是 `Mozilla/5.0 (Linux; Android 14) AnimeUniverse/0.5 (RSS reader)`：
+ *     - 以 `Mozilla/5.0` 开头 = 浏览器伪装（违反 must not be spoofed）
+ *     - `(RSS reader)` 与实际用途不符
+ *   本适配器发出的每个请求都应带**如实描述自身**的标识。
+ *
+ * ⚠️ 不改全局 UA：其他来源（Bangumi/AniList/Jikan/Bilibili）的行为
+ *    必须逐字不变，见 UA-8 测试。
+ * ⚠️ 不添加 Via、不使用任何代理（条款明令禁止）。
+ * ══════════════════════════════════════════════════════════════ */
+export const MANGADEX_USER_AGENT = 'AnimeUniverse/0.6 (manga reader)'
+
+/** 所有 MangaDex 请求统一走这个 headers 对象，避免遗漏 */
+function mdHeaders(): Record<string, string> {
+  return { 'User-Agent': MANGADEX_USER_AGENT }
+}
+
+/* ══════════════════════════════════════════════════════════════
  * 2c 诊断接入：尝试台账（文件内私有，不进入 diagnostics、不新增诊断 API）
  *  - helper 只【登记】每次尝试，绝不终结
  *  - 终结权集中在适配器 finally（成功/失败两路径都执行）
@@ -65,7 +89,10 @@ async function mdGet(path: string, plan?: AttemptPlan): Promise<any> {
       const ctx: DiagContext | undefined = slot && plan
         ? { sourceId: 'mangadex', requestType: 'manga_search', attempt, requestId: plan.requestId, attemptId: slot.attemptId, path: path.split('?')[0] }
         : undefined
-      const r = await httpGetText(`${BASE}${path}`, 10000, undefined, ctx)
+      // ★ P1 第2子步：传入 MangaDex 专用 UA（覆盖 nativeHttp 的全局 UA）
+      //   httpGetText 的 extraHeaders 会展开在 `{ 'User-Agent': UA, ...extraHeaders }`
+      //   之后，因此这里能正确覆盖，且**只影响本适配器**。
+      const r = await httpGetText(`${BASE}${path}`, 10000, mdHeaders(), ctx)
       if (r.status !== 200) throw new Error(`HTTP ${r.status}`)
       if (ctx) markParsing(ctx.attemptId)
       const json = JSON.parse(r.text)
