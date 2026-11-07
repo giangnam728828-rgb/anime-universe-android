@@ -205,6 +205,19 @@ export default function ProfilePage() {
         集动漫、漫画、资讯、资源搜索、AI 助手与实用工具于一体的综合内容平台。<br />
         本地优先架构，个人数据仅保存在本机。<br /><br />
         技术栈：React 18 · TypeScript · Vite · Capacitor 6
+        <br /><br />
+        {/* MangaBaka 数据署名：CC BY-NC-SA 4.0 强制要求署名 + 许可链接 */}
+        <b>漫画数据来源</b><br />
+        本站部分漫画元数据来自 MangaBaka，遵循{' '}
+        <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener noreferrer">
+          CC BY-NC-SA 4.0
+        </a>{' '}
+        许可。<br />
+        来源网站：{' '}
+        <a href="https://mangabaka.org" target="_blank" rel="noopener noreferrer">
+          https://mangabaka.org
+        </a><br />
+        数据可能经过应用展示所需的格式整理。
       </Modal>
 
       <Modal open={reading} onClose={() => setReading(false)} title="阅读设置">
