@@ -84,7 +84,8 @@ export default function DiscoveryPage() {
                 {status.text}
               </div>
             )}
-            {status.kind !== 'none' && failed.length > 0 && status.kind !== 'partial-failure' && (
+            {/* 失败来源明细：partial-failure 也要展示，否则只剩数量、无法定位 */}
+            {status.kind !== 'none' && failed.length > 0 && (
               <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginTop: 4 }}>
                 {failed.join('、')} 未返回
               </div>
