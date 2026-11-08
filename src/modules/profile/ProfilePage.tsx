@@ -151,6 +151,13 @@ export default function ProfilePage() {
             desc="诊断记录查看与 JSON 导出（阶段3）"
             onClick={openDiag}
           />
+          {/* A1：Internet Archive 独立内容集合入口（经权利核查的公共领域动画） */}
+          <Row
+            icon="film"
+            title="公共领域动画"
+            desc="Internet Archive · 仅收录经权利核查的作品"
+            onClick={() => nav('/ia-library')}
+          />
           {/* 播放专项阶段1：临时自检入口，仅用于原生播放器验收（阶段2 移除） */}
           <Row
             icon="film"
