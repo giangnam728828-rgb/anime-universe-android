@@ -9,6 +9,7 @@ import ProxyCover from '../covers/ProxyCover'
 import { isFavorited, toggleFavorite } from '../../database/db'
 import { createToken, peek, type EntrySnapshot, type RouteIdentity } from './searchSession'
 import ChapterList, { sourceSupportsChapters } from './ChapterList'
+import EpisodeList from './EpisodeList'
 
 export const favKeyOf = (sourceId: string, kind: string, workId: string) => `${sourceId}-${kind}-${workId}`
 
@@ -197,6 +198,20 @@ export default function DetailPage() {
           <ChapterList
             sourceId={d.sourceId}
             kind={d.kind}
+            workId={d.workId}
+            fromPath={location.pathname}
+          />
+        ) : d.kind === 'anime' && !!d.workId ? (
+          /*
+            批次③后续：动漫真实剧集入口。
+            🔴 剧集**只能**来自 PlaybackSourceResolver.getEpisodes()。
+               WorkDetail 只有 episodes?: number（集数总量），
+               绝不用它或硬编码 1 伪造 episodeId。
+            🔴 无已登记解析器时 EpisodeList 内部显示「暂无可用播放源」，
+               不渲染任何播放按钮。
+          */
+          <EpisodeList
+            contentSourceId={d.sourceId}
             workId={d.workId}
             fromPath={location.pathname}
           />
