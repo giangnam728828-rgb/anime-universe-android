@@ -233,9 +233,15 @@ describe('P47 冻结区未改', () => {
     expect(svc).not.toContain('EpisodeList')
   })
 
-  it('P47c 注册表仍为空表（不擅自加播放源）', () => {
+  it('P47c 注册表只含经批准的播放源（不擅自扩源）', () => {
+    // 阶段3·第3步·第2步：首批 IA Resolver 已登记，「空表」断言失效。
+    // 改为锁住真正重要的约束：注册表中只能出现经权利核查批准的来源。
     const reg = read('services/playback/registry.ts')
-    expect(reg).toContain('PLAYBACK_RESOLVERS: PlaybackSourceResolver[] = []')
+    expect(reg).toContain('iaArchiveResolver')
+    // 淘汰/待核来源不得出现在注册表
+    for (const banned of ['superman_1941', 'Popeye', 'BugsBunny', 'bb_snow_white', 'ani.pm']) {
+      expect(reg).not.toContain(banned)
+    }
   })
 
   it('P47d 原生播放器未改', () => {

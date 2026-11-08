@@ -24,6 +24,7 @@
  *    上层返回 `NO_RESOLVER_ENABLED`，**不抛未捕获异常**。
  */
 import type { PlaybackSourceResolver } from './PlaybackService'
+import { iaArchiveResolver } from './iaArchive'
 import { isSourceEnabled } from '../sources/settings'
 
 /**
@@ -33,7 +34,8 @@ import { isSourceEnabled } from '../sources/settings'
  * **首版为空** —— 尚无通过准入的播放源（见 §1.3.1）。
  */
 export const PLAYBACK_ORDER: Readonly<Record<string, number>> = Object.freeze({
-  // 暂无
+  // 阶段3·第3步·第2步：首个真实播放源（Internet Archive 公共领域动画）
+  'ia-archive': 10,
 })
 
 /**
@@ -54,7 +56,10 @@ export const UNKNOWN_PLAYBACK_RANK: number =
  * 新增播放源 = 本数组追加一项 + `PLAYBACK_ORDER` 加排名（两处都要改，
  * 构建期断言保证一致）。
  */
-export const PLAYBACK_RESOLVERS: PlaybackSourceResolver[] = []
+export const PLAYBACK_RESOLVERS: PlaybackSourceResolver[] = [
+  // 阶段3·第3步·第2步：首个真实播放源（A1 有限接入，仅 3 部已核查作品）
+  iaArchiveResolver,
+]
 
 /**
  * 按 id 取解析器。
