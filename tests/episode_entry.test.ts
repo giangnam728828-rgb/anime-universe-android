@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { PLAYBACK_RESOLVERS } from '../src/services/playback/registry'
 
 const SRC = join(__dirname, '..', 'src')
 const read = (p: string) => readFileSync(join(SRC, p), 'utf-8')
@@ -233,15 +234,31 @@ describe('P47 冻结区未改', () => {
     expect(svc).not.toContain('EpisodeList')
   })
 
-  it('P47c 注册表只含经批准的播放源（不擅自扩源）', () => {
-    // 阶段3·第3步·第2步：首批 IA Resolver 已登记，「空表」断言失效。
-    // 改为锁住真正重要的约束：注册表中只能出现经权利核查批准的来源。
+  it('P47c 🔴 注册表必须精确含 IA，且无任何未批准来源', () => {
+    /*
+     * 用户审查指出：只排除淘汰源不够——空注册表也会通过。
+     * 必须同时验证三条：
+     *   ① 注册表**包含** ia-archive（存在性）
+     *   ② 不含已淘汰来源（排除性）
+     *   ③ 不存在未批准的额外 Resolver（完整性）
+     */
     const reg = read('services/playback/registry.ts')
+
+    // ① 存在性
     expect(reg).toContain('iaArchiveResolver')
-    // 淘汰/待核来源不得出现在注册表
-    for (const banned of ['superman_1941', 'Popeye', 'BugsBunny', 'bb_snow_white', 'ani.pm']) {
+
+    // ② 排除性
+    for (const banned of [
+      'superman_1941', 'Popeye', 'BugsBunny', 'bb_snow_white',
+      'bb_minnie_the_moocher', 'ThePuppetsNightmare', 'TinSoldier', 'ani.pm',
+    ]) {
       expect(reg).not.toContain(banned)
     }
+
+    // ③ 完整性：运行时注册表必须精确等于 {ia-archive}
+    //    （比源码字符串检查更强——即使源码写了别的名字，运行时也会暴露）
+    expect(PLAYBACK_RESOLVERS.map((r) => r.sourceId).sort()).toEqual(['ia-archive'])
+    expect(PLAYBACK_RESOLVERS).toHaveLength(1)
   })
 
   it('P47d 原生播放器未改', () => {

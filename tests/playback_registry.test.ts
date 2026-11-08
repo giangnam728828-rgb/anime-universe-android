@@ -3,7 +3,7 @@
  *
  * 覆盖方案 v2 §1（Playback Registry）与 §1.3.1（空 Registry 安全）
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -14,6 +14,10 @@ import {
   enabledResolvers,
   playbackRank,
 } from '../src/services/playback/registry'
+import {
+  setSourceEnabled,
+  __reloadForTest,
+} from '../src/services/sources/settings'
 
 const SRC = join(__dirname, '..', 'src')
 
@@ -29,7 +33,12 @@ describe('P1 空 Registry 安全', () => {
    *
    * ⇒ 改为「不依赖具体数量」的形式，并显式测空表路径。
    */
-  it('注册表结构合法（每个 resolver 都有 sourceId/sourceName）', () => {
+  it('🔴 生产注册表必须精确等于 {ia-archive}（不是「看起来合法」）', () => {
+    const ids = PLAYBACK_RESOLVERS.map((r) => r.sourceId).sort()
+    expect(ids).toEqual(['ia-archive'])
+  })
+
+  it('每个 resolver 都有非空 sourceId / sourceName', () => {
     for (const r of PLAYBACK_RESOLVERS) {
       expect(typeof r.sourceId).toBe('string')
       expect(r.sourceId.length).toBeGreaterThan(0)
@@ -57,6 +66,69 @@ describe('P1 空 Registry 安全', () => {
     expect(empty.filter(() => true)).toEqual([])
     // UNKNOWN_PLAYBACK_RANK 的表达式对空表必须给出有限值
     expect(Number.isFinite(UNKNOWN_PLAYBACK_RANK)).toBe(true)
+  })
+})
+
+describe('P1b enabledResolvers 真实过滤行为', () => {
+  /*
+   * 用户审查要求：不能只验证「不抛异常 + 返回数组」。
+   * 必须覆盖三种情况：
+   *   ① 预期启用配置下 IA 确实被返回
+   *   ② 禁用 IA 后不被返回
+   *   ③ 不会返回未注册的 Resolver
+   *
+   * ⚠️ 本项目 environment: 'node'，无 localStorage。
+   *    isSourceEnabled 内部依赖 localStorage，因此用内存桩替代。
+   */
+  const store = new Map<string, string>()
+
+  beforeEach(() => {
+    store.clear()
+    ;(globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: () => null,
+      length: 0,
+    } as Storage
+    __reloadForTest()
+  })
+
+  it('① 默认（全部启用）时返回 IA', () => {
+    const ids = enabledResolvers().map((r) => r.sourceId)
+    expect(ids).toContain('ia-archive')
+  })
+
+  it('② 禁用 IA 后不再返回', () => {
+    setSourceEnabled('ia-archive', false)
+    __reloadForTest()
+    const ids = enabledResolvers().map((r) => r.sourceId)
+    expect(ids).not.toContain('ia-archive')
+    expect(ids).toHaveLength(0)
+  })
+
+  it('②b 重新启用后恢复返回', () => {
+    setSourceEnabled('ia-archive', false)
+    __reloadForTest()
+    expect(enabledResolvers()).toHaveLength(0)
+    setSourceEnabled('ia-archive', true)
+    __reloadForTest()
+    expect(enabledResolvers().map((r) => r.sourceId)).toEqual(['ia-archive'])
+  })
+
+  it('③ 返回结果必须是 PLAYBACK_RESOLVERS 的子集且是同一对象引用', () => {
+    const registered = new Set(PLAYBACK_RESOLVERS.map((r) => r.sourceId))
+    for (const r of enabledResolvers()) {
+      expect(registered.has(r.sourceId)).toBe(true)
+      expect(PLAYBACK_RESOLVERS).toContain(r)
+    }
+  })
+
+  it('③b 禁用未知 id 不影响 IA', () => {
+    setSourceEnabled('not-a-real-source', false)
+    __reloadForTest()
+    expect(enabledResolvers().map((r) => r.sourceId)).toContain('ia-archive')
   })
 })
 
