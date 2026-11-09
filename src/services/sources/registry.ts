@@ -17,6 +17,7 @@ import bilibili from './bilibili'
 import mangadex from './mangadex'
 import bangumi from './bangumi'
 import mangabaka from './mangabaka'
+import terraHistoricus from './terraHistoricus'
 import { isSourceEnabled } from './settings'
 
 /**
@@ -24,7 +25,9 @@ import { isSourceEnabled } from './settings'
  * 新增来源在此追加；排名必须为非负唯一整数。
  *
  * mangabaka = 5：新来源先取最低优先级，不冲击首页既有排序。
- * 加入后 UNKNOWN_RANK 由 5 变为 6（本表 max+1 动态计算），
+ *
+ * terra-historicus = 6（阶段3·第4步）：泰拉记事社，鹰角网络官方免费漫画。
+ * 追加为最大排名，**不重排既有来源**；UNKNOWN_RANK 由 6 变 7（max+1 动态计算），
  * "未知来源排最后"的语义不变。
  */
 export const SOURCE_ORDER: Readonly<Record<string, number>> = Object.freeze({
@@ -34,6 +37,7 @@ export const SOURCE_ORDER: Readonly<Record<string, number>> = Object.freeze({
   anilist: 3,
   jikan: 4,
   mangabaka: 5,
+  'terra-historicus': 6,
 })
 
 /**
@@ -53,7 +57,7 @@ export function rank(sourceId: string): number {
 }
 
 /** 全部来源适配器（不受开关影响；开关过滤见 enabledSources） */
-export const SOURCES: SourceAdapter[] = [bangumi, bilibili, mangadex, anilist, jikan, mangabaka]
+export const SOURCES: SourceAdapter[] = [bangumi, bilibili, mangadex, anilist, jikan, mangabaka, terraHistoricus]
 
 /** 来源显示名映射 */
 export const SOURCE_NAMES: Record<string, string> = Object.fromEntries(
